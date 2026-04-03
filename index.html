@@ -1140,13 +1140,13 @@ function MastersPool() {
 
   // ── shared search/sort bar ──
   const SearchBar = () => /*#__PURE__*/React.createElement("div", {
-    style: {
+    style: {defaultdefaultValue: search,
       display: "flex",
       gap: 8,
       marginBottom: 8
     }
   }, /*#__PURE__*/React.createElement("input", {
-    value: search,
+    defaultValue: search,
     onChange: e => setSearch(e.target.value),
     placeholder: "Search players\u2026",
     style: {
