@@ -904,7 +904,7 @@ function MastersPool() {
       });
     }
     return list;
-  }, [leaderboard, search, sortBy]);
+  }, [leaderboard, search, pickSearch, sortBy, tab]);
 
   // Determine tournament winner from leaderboard (position === 1, not MTC)
   const tournamentWinner = useMemo(() => {
