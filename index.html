@@ -596,8 +596,8 @@ const FIELD_2026 = [
 // ─── ESPN Golf API fetch ───────────────────────────────────────────────────
 // ESPN's public endpoint for the Masters (event 2025014 = Masters 2026 placeholder;
 // ESPN uses a consistent pattern — we fetch the current Masters event ID dynamically)
-const ESPN_MASTERS_URL = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?event=401703504";
-// 401703504 = 2025 Masters (most recent known); for 2026 ESPN will use a new ID.
+const ESPN_MASTERS_URL = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?event=401811941";
+// 401811941 = 2025 Masters (most recent known); for 2026 ESPN will use a new ID.
 // The app tries this URL; if ESPN returns a different/new event, it still parses correctly.
 
 function parseESPN(data) {
