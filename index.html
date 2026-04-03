@@ -1,24 +1,22 @@
-
 <!DOCTYPE html>
 <html lang="en">
-<head>value: search,
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Masters Pool 2026</title>
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #1b4332; font-family: Georgia, serif; -webkit-tap-highlight-color: transparent; }
-    #root { min-height: 100vh; }
-    input, select, textarea, button { font-family: Georgia, serif; }
-    input, select, textarea { font-size: 16px !important; }
-  </style>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Masters Pool 2026</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1b4332;font-family:Georgia,serif;-webkit-tap-highlight-color:transparent}
+#root{min-height:100vh}
+input,select,textarea,button{font-family:Georgia,serif}
+input,select,textarea{font-size:16px!important}
+</style>
 </head>
 <body>
-  <div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#c9a84c;font-family:Georgia,serif;font-size:18px;">Loading Masters Pool...</div></div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script>
+<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#c9a84c;font-family:Georgia,serif;font-size:18px">Loading Masters Pool...</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
 const {
   useState,
   useEffect,
@@ -481,10 +479,6 @@ const FIELD_2026 = [
   country: "ESP",
   worldRanking: 105
 }, {
-  name: "Jon Rahm",
-  country: "ESP",
-  worldRanking: 26
-}, {
   name: "Carlos Ortiz",
   country: "MEX",
   worldRanking: 115
@@ -537,11 +531,6 @@ const FIELD_2026 = [
   worldRanking: 150
 },
 // ── PGA Tour winners ──
-{
-  name: "Sepp Straka",
-  country: "AUT",
-  worldRanking: 28
-},
 // ── Amateurs ──
 {
   name: "Jackson Herrington",
@@ -755,6 +744,7 @@ function MastersPool() {
   const [winnerPick, setWinnerPick] = useState("");
   const [winnerSearch, setWinnerSearch] = useState("");
   const [search, setSearch] = useState("");
+  const [pickSearch, setPickSearch] = useState("");
   const [sortBy, setSortBy] = useState("ranking");
   const [expandedEntry, setExpandedEntry] = useState(null);
   const [commPassword, setCommPassword] = useState("");
@@ -853,14 +843,19 @@ function MastersPool() {
     const loadEntries = async () => {
       try {
         const data = await db.getEntries();
-        setEntries(data.map(r => ({
+        const mapped = data.map(r => ({
           id: r.id,
           name: r.name,
           picks: r.picks,
           winnerPick: r.winner_pick,
           deviceId: r.device_id,
           createdAt: r.created_at
-        })));
+        }));
+        // Only update if data changed — prevents focus-stealing re-renders
+        setEntries(prev => {
+          if (JSON.stringify(prev.map(e => e.id + e.name)) === JSON.stringify(mapped.map(e => e.id + e.name))) return prev;
+          return mapped;
+        });
         setDbError(null);
       } catch (e) {
         setDbError("Could not reach database: " + e.message);
@@ -894,7 +889,8 @@ function MastersPool() {
   }, [manualScores, espnError, applyLeaderboard]);
   const displayPlayers = useMemo(() => {
     let list = [...leaderboard];
-    const q = search.trim().toLowerCase();
+    const activeSearch = tab === "pick" ? pickSearch : search;
+    const q = activeSearch.trim().toLowerCase();
     if (q) list = list.filter(p => p.name.toLowerCase().includes(q));
     if (sortBy === "ranking") list.sort((a, b) => {
       var _a$worldRanking, _b$worldRanking;
@@ -980,6 +976,7 @@ function MastersPool() {
       setWinnerPick("");
       setWinnerSearch("");
       setSearch("");
+      setPickSearch("");
       setTab("standings");
       setDbError(null);
     } catch (e) {
@@ -1140,15 +1137,16 @@ function MastersPool() {
 
   // ── shared search/sort bar ──
   const SearchBar = () => /*#__PURE__*/React.createElement("div", {
-    style: {defaultdefaultValue: search,
+    style: {
       display: "flex",
       gap: 8,
       marginBottom: 8
     }
   }, /*#__PURE__*/React.createElement("input", {
-    defaultValue: search,
+    value: search,
     onChange: e => setSearch(e.target.value),
     placeholder: "Search players\u2026",
+    autoComplete: "off",
     style: {
       flex: 1,
       padding: "9px 12px",
@@ -1280,7 +1278,7 @@ function MastersPool() {
       background: "#0d1f15",
       borderBottom: "1px solid #1a2e1e"
     }
-  }, [["standings", `🏆 Standings${entries.length ? ` (${entries.length})` : ""}`], ["pick", locked ? "🔒 Pick Sheet" : "✏️ Pick Sheet"], ["field", "👥 Full Field"], ["manual", espnError ? "⚠️ Scores" : "📝 Scores"], ["admin", commUnlocked ? "🔑 Admin" : "🔒 Admin"]].map(_ref4 => {
+  }, [["standings", `🏆 Standings${entries.length ? ` (${entries.length})` : ""}`], ["pick", locked ? "🔒 Pick Sheet" : "✏️ Pick Sheet"], ["field", "👥 Full Field"], ["admin", commUnlocked ? "🔑 Admin ▾" : "🔒 Admin"]].map(_ref4 => {
     let [key, label] = _ref4;
     return /*#__PURE__*/React.createElement("button", {
       key: key,
@@ -1764,6 +1762,7 @@ function MastersPool() {
     onChange: e => setEntryName(e.target.value),
     disabled: locked,
     placeholder: "e.g. Robert's Picks",
+    tabIndex: -1,
     style: {
       width: "100%",
       padding: "10px 12px",
@@ -1800,6 +1799,7 @@ function MastersPool() {
       if (!e.target.value) setWinnerPick("");
     },
     disabled: locked,
+    tabIndex: -1,
     placeholder: "Search for your winner pick\u2026",
     style: {
       width: "100%",
@@ -1961,7 +1961,51 @@ function MastersPool() {
       fontSize: 14,
       lineHeight: 1
     }
-  }, "\xD7")))), /*#__PURE__*/React.createElement(SearchBar, null), loading && leaderboard.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "\xD7")))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: pickSearch,
+    onChange: e => setPickSearch(e.target.value),
+    placeholder: "Search players\u2026",
+    disabled: locked,
+    autoComplete: "off",
+    tabIndex: 0,
+    onMouseDown: e => e.stopPropagation(),
+    onClick: e => e.currentTarget.focus(),
+    style: {
+      flex: 1,
+      padding: "9px 12px",
+      borderRadius: 8,
+      background: "#0a1410",
+      border: "1px solid #2a4a35",
+      color: CREAM,
+      fontSize: 16,
+      outline: "none",
+      opacity: locked ? 0.5 : 1
+    }
+  }), /*#__PURE__*/React.createElement("select", {
+    value: sortBy,
+    onChange: e => setSortBy(e.target.value),
+    style: {
+      background: "#0a1410",
+      border: "1px solid #2a4a35",
+      color: "#5a8a6a",
+      borderRadius: 8,
+      padding: "0 10px",
+      fontSize: 11,
+      cursor: "pointer"
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "ranking"
+  }, "By Ranking"), /*#__PURE__*/React.createElement("option", {
+    value: "alpha"
+  }, "A \u2192 Z"), /*#__PURE__*/React.createElement("option", {
+    value: "score"
+  }, "By Score"))), loading && leaderboard.length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       padding: 40,
@@ -2420,7 +2464,20 @@ function MastersPool() {
       fontSize: 13,
       cursor: "pointer"
     }
-  }, "\u2B07 Export All Entries to CSV"))), tab === "manual" && /*#__PURE__*/React.createElement("div", {
+  }, "\u2B07 Export All Entries to CSV"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setTab("manual"),
+    style: {
+      width: "100%",
+      marginTop: 8,
+      padding: 12,
+      borderRadius: 8,
+      border: `1px solid ${espnError ? "#7f1d1d" : "#2a4a35"}`,
+      background: "#0a1410",
+      color: espnError ? "#fca5a5" : "#5a8a6a",
+      fontSize: 13,
+      cursor: "pointer"
+    }
+  }, espnError ? "⚠ Enter Manual Scores" : "📝 Manual Score Override"))), tab === "manual" && commUnlocked && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: "14px 12px"
     }
@@ -2718,7 +2775,6 @@ function MastersPool() {
   }, "Apply Manual Scores \u2192"))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(MastersPool));
-  </script>
+</script>
 </body>
 </html>
-
