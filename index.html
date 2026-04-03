@@ -1,0 +1,2727 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Masters Pool 2026</title>
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1b4332; font-family: Georgia, serif; -webkit-tap-highlight-color: transparent; }
+    #root { min-height: 100vh; }
+    input, select, textarea, button { font-family: Georgia, serif; }
+    input, select, textarea { font-size: 16px !important; }
+  </style>
+</head>
+<body>
+  <div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#c9a84c;font-family:Georgia,serif;font-size:18px;">Loading Masters Pool...</div></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script>
+const {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef
+} = React;
+
+// Masters 2026 first tee time: Thursday April 9, 2026 at 8:00 AM ET
+const LOCK_TIME = new Date("2026-04-09T08:00:00-04:00");
+
+// ─── Supabase config ───────────────────────────────────────────────────────
+const SB_URL = "https://izdgawomevpnjccjjhwc.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6ZGdhd29tZXZwbmpjY2pqaHdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMjA5MzYsImV4cCI6MjA5MDc5NjkzNn0.MlDJeD1J0fT_75BkoxeCXlM3qtV3Getf4ajXl4ZzLlg";
+const SB_HEADERS = {
+  "Content-Type": "application/json",
+  "apikey": SB_KEY,
+  "Authorization": `Bearer ${SB_KEY}`
+};
+async function sbFetch(path) {
+  let options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
+  const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      ...SB_HEADERS,
+      ...(options.headers || {})
+    }
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Supabase error: ${err}`);
+  }
+  return options.method === "DELETE" ? null : res.json();
+}
+
+// Supabase CRUD helpers
+const db = {
+  getEntries: () => sbFetch("entries?select=*&order=created_at.asc"),
+  addEntry: entry => sbFetch("entries", {
+    method: "POST",
+    headers: {
+      "Prefer": "return=representation"
+    },
+    body: JSON.stringify({
+      name: entry.name,
+      picks: entry.picks,
+      winner_pick: entry.winnerPick || null,
+      device_id: entry.deviceId || null
+    })
+  }),
+  deleteEntry: id => sbFetch(`entries?id=eq.${id}`, {
+    method: "DELETE"
+  }),
+  getManualScores: () => sbFetch("manual_scores?select=*&order=updated_at.desc&limit=1"),
+  upsertManualScores: scores => sbFetch("manual_scores", {
+    method: "POST",
+    headers: {
+      "Prefer": "resolution=merge-duplicates,return=representation"
+    },
+    body: JSON.stringify({
+      scores
+    })
+  }),
+  clearManualScores: () => sbFetch("manual_scores", {
+    method: "DELETE"
+  })
+};
+const ACCENT = "#2d6a4f";
+const GOLD = "#c9a84c";
+const GREEN_DARK = "#1b4332";
+const GREEN_MED = "#40916c";
+const CREAM = "#fdf8ee";
+
+// ─── Scoring Engine ────────────────────────────────────────────────────────
+// Rules:
+//   1. From 8 picks, take the 6 with the lowest cumulative score (made-cut first,
+//      then best MTC by R1+R2 to fill any open slots).
+//   2. Made-cut players score normally through all rounds completed by the field.
+//   3. MTC players filling a top-6 slot score their real R1 and R2. For R3 and R4,
+//      they receive their R1+R2 average — BUT ONLY once that round is fully
+//      complete for the active field. We never pre-credit a future round.
+//   4. "Round complete" = the field leader has a posted score for that round.
+//      Mid-round (some players still on course), the round is NOT yet counted.
+//   5. Total = sum of all 6 players' scores through fully completed rounds only.
+
+function roundsFullyComplete(leaderboard) {
+  // A round N is "fully complete" when the tournament leader (lowest score,
+  // non-MTC) has a real posted score for round N.
+  // We find the active leader and check their rounds sequentially.
+  // "Fully complete" means ALL active players have finished — we approximate
+  // this by checking that the leader has that round score posted AND the round
+  // count from the source is consistent. Since we rely on the API returning
+  // confirmed scores, a non-null score on the leader = round finished.
+  const activePlayers = leaderboard.filter(p => !p.cut);
+  if (activePlayers.length === 0) return 0;
+  // Sort by cumulative score to find the leader
+  const leader = [...activePlayers].sort((a, b) => {
+    var _a$score, _b$score;
+    return ((_a$score = a.score) !== null && _a$score !== void 0 ? _a$score : 9999) - ((_b$score = b.score) !== null && _b$score !== void 0 ? _b$score : 9999);
+  })[0];
+  if (!leader) return 0;
+  // Walk rounds: only count a round as complete if the leader has it posted
+  if (leader.r4 != null) return 4;
+  if (leader.r3 != null) return 3;
+  if (leader.r2 != null) return 2;
+  if (leader.r1 != null) return 1;
+  return 0;
+}
+function playerScoreForRound(p, round, completedRounds) {
+  var _ref2;
+  // Returns the score to use for a given round, given how many rounds the
+  // active field has fully completed.
+  // - If round > completedRounds: round not yet counted → null
+  // - Made-cut players: use their real posted round score
+  // - MTC players: R1/R2 real; R3/R4 = avg(R1,R2) but only if that round
+  //   is fully complete for the active field
+  if (round > completedRounds) return null; // round not done yet
+
+  if (!p.cut) {
+    var _ref;
+    // Made-cut: return real score for that round (null if not posted)
+    return (_ref = [p.r1, p.r2, p.r3, p.r4][round - 1]) !== null && _ref !== void 0 ? _ref : null;
+  }
+
+  // MTC player
+  if (round <= 2) return (_ref2 = [p.r1, p.r2][round - 1]) !== null && _ref2 !== void 0 ? _ref2 : null;
+
+  // R3 or R4 for MTC: simulate with avg, but only if that round is done
+  // (completedRounds check already passed above)
+  if (p.r1 != null && p.r2 != null) {
+    return Math.round((p.r1 + p.r2) / 2);
+  }
+  return null;
+}
+function scoreEntry(picks, leaderboard) {
+  const completedRounds = roundsFullyComplete(leaderboard);
+
+  // Enrich picks with leaderboard data
+  const enriched = picks.map(name => {
+    const p = leaderboard.find(l => l.name.toLowerCase() === name.toLowerCase());
+    if (!p) return {
+      name,
+      missing: true,
+      cut: false,
+      score: null,
+      r1: null,
+      r2: null,
+      r3: null,
+      r4: null
+    };
+    return {
+      ...p,
+      missing: false
+    };
+  });
+
+  // Split into made-cut and MTC (exclude missing)
+  const madeCut = enriched.filter(p => !p.missing && !p.cut);
+  const missedCut = enriched.filter(p => !p.missing && p.cut);
+
+  // Sort made-cut by total posted strokes ascending
+  madeCut.sort((a, b) => {
+    var _a$score2, _b$score2;
+    return ((_a$score2 = a.score) !== null && _a$score2 !== void 0 ? _a$score2 : 9999) - ((_b$score2 = b.score) !== null && _b$score2 !== void 0 ? _b$score2 : 9999);
+  });
+
+  // Sort MTC by R1+R2 ascending (lower = better = gets the slot)
+  missedCut.sort((a, b) => {
+    var _a$r, _a$r2, _b$r, _b$r2;
+    const sa = ((_a$r = a.r1) !== null && _a$r !== void 0 ? _a$r : 99) + ((_a$r2 = a.r2) !== null && _a$r2 !== void 0 ? _a$r2 : 99);
+    const sb = ((_b$r = b.r1) !== null && _b$r !== void 0 ? _b$r : 99) + ((_b$r2 = b.r2) !== null && _b$r2 !== void 0 ? _b$r2 : 99);
+    return sa - sb;
+  });
+
+  // Fill top 6: made-cut first, then best MTC to fill open slots
+  const top6 = [...madeCut.slice(0, 6)];
+  if (top6.length < 6) {
+    top6.push(...missedCut.slice(0, 6 - top6.length));
+  }
+
+  // Build per-round scores and running totals for each top-6 player
+  let entryTotal = 0;
+  const top6Scored = top6.map(p => {
+    const avgScore = p.cut && p.r1 != null && p.r2 != null ? Math.round((p.r1 + p.r2) / 2) : null;
+
+    // roundScores[r] = score for round r+1, respecting completedRounds gate
+    const roundScores = [1, 2, 3, 4].map(r => playerScoreForRound(p, r, completedRounds));
+
+    // Running total = sum of all non-null round scores (rounds that are complete)
+    const runningTotal = completedRounds > 0 ? roundScores.slice(0, completedRounds).reduce((acc, s) => acc + (s !== null && s !== void 0 ? s : 0), 0) : null;
+    entryTotal += runningTotal !== null && runningTotal !== void 0 ? runningTotal : 0;
+    return {
+      ...p,
+      roundScores,
+      runningTotal,
+      isMTC: !!p.cut,
+      avgScore
+    };
+  });
+  return {
+    enrichedPicks: enriched,
+    top6: top6Scored,
+    total: completedRounds > 0 ? entryTotal : null,
+    roundsPlayed: completedRounds,
+    mtcInTop6: top6Scored.filter(p => p.isMTC).length
+  };
+}
+
+// ─── 2026 Masters Hardcoded Field ─────────────────────────────────────────
+// Source: masters.com, Wikipedia, Sky Sports, Golf Channel (as of April 1, 2026)
+// OWGR approximate as of March 30, 2026. Tiger Woods status unclear (listed, may WD).
+// Valero Texas Open winner (if unqualified) added after April 6.
+// ESPN auto-updates will override this once live tournament data is available.
+const FIELD_2026 = [
+// ── Major contenders / Top ranked ──
+{
+  name: "Scottie Scheffler",
+  country: "USA",
+  worldRanking: 1
+}, {
+  name: "Rory McIlroy",
+  country: "NIR",
+  worldRanking: 2
+}, {
+  name: "Xander Schauffele",
+  country: "USA",
+  worldRanking: 3
+}, {
+  name: "Collin Morikawa",
+  country: "USA",
+  worldRanking: 4
+}, {
+  name: "Bryson DeChambeau",
+  country: "USA",
+  worldRanking: 5
+}, {
+  name: "Ludvig Aberg",
+  country: "SWE",
+  worldRanking: 6
+}, {
+  name: "Tommy Fleetwood",
+  country: "ENG",
+  worldRanking: 7
+}, {
+  name: "Viktor Hovland",
+  country: "NOR",
+  worldRanking: 8
+}, {
+  name: "Sungjae Im",
+  country: "KOR",
+  worldRanking: 9
+}, {
+  name: "Patrick Cantlay",
+  country: "USA",
+  worldRanking: 10
+}, {
+  name: "Corey Conners",
+  country: "CAN",
+  worldRanking: 11
+}, {
+  name: "Shane Lowry",
+  country: "IRL",
+  worldRanking: 12
+}, {
+  name: "Robert MacIntyre",
+  country: "SCO",
+  worldRanking: 13
+}, {
+  name: "Keegan Bradley",
+  country: "USA",
+  worldRanking: 14
+}, {
+  name: "Russell Henley",
+  country: "USA",
+  worldRanking: 15
+}, {
+  name: "Cameron Young",
+  country: "USA",
+  worldRanking: 16
+}, {
+  name: "Akshay Bhatia",
+  country: "USA",
+  worldRanking: 17
+}, {
+  name: "Brian Harman",
+  country: "USA",
+  worldRanking: 18
+}, {
+  name: "Tyrrell Hatton",
+  country: "ENG",
+  worldRanking: 19
+}, {
+  name: "Justin Thomas",
+  country: "USA",
+  worldRanking: 20
+}, {
+  name: "Sam Burns",
+  country: "USA",
+  worldRanking: 21
+}, {
+  name: "Harris English",
+  country: "USA",
+  worldRanking: 22
+}, {
+  name: "Min Woo Lee",
+  country: "AUS",
+  worldRanking: 23
+}, {
+  name: "Wyndham Clark",
+  country: "USA",
+  worldRanking: 24
+}, {
+  name: "Justin Rose",
+  country: "ENG",
+  worldRanking: 25
+}, {
+  name: "Jon Rahm",
+  country: "ESP",
+  worldRanking: 26
+}, {
+  name: "Jason Day",
+  country: "AUS",
+  worldRanking: 27
+}, {
+  name: "Sepp Straka",
+  country: "AUT",
+  worldRanking: 28
+}, {
+  name: "J.J. Spaun",
+  country: "USA",
+  worldRanking: 29
+}, {
+  name: "Maverick McNealy",
+  country: "USA",
+  worldRanking: 30
+}, {
+  name: "Ben Griffin",
+  country: "USA",
+  worldRanking: 31
+}, {
+  name: "Max Homa",
+  country: "USA",
+  worldRanking: 32
+}, {
+  name: "Andrew Novak",
+  country: "USA",
+  worldRanking: 33
+}, {
+  name: "Harry Hall",
+  country: "ENG",
+  worldRanking: 34
+}, {
+  name: "Rasmus Hojgaard",
+  country: "DEN",
+  worldRanking: 35
+}, {
+  name: "Nicolai Hojgaard",
+  country: "DEN",
+  worldRanking: 36
+}, {
+  name: "Matt Fitzpatrick",
+  country: "ENG",
+  worldRanking: 37
+}, {
+  name: "Hideki Matsuyama",
+  country: "JPN",
+  worldRanking: 38
+}, {
+  name: "Ryan Fox",
+  country: "NZL",
+  worldRanking: 39
+}, {
+  name: "Nico Echavarria",
+  country: "COL",
+  worldRanking: 40
+}, {
+  name: "Chris Gotterup",
+  country: "USA",
+  worldRanking: 41
+}, {
+  name: "Jake Knapp",
+  country: "USA",
+  worldRanking: 42
+}, {
+  name: "Aldrich Potgieter",
+  country: "RSA",
+  worldRanking: 43
+}, {
+  name: "Nick Taylor",
+  country: "CAN",
+  worldRanking: 44
+}, {
+  name: "Matt McCarty",
+  country: "USA",
+  worldRanking: 46
+}, {
+  name: "Daniel Berger",
+  country: "USA",
+  worldRanking: 47
+}, {
+  name: "Jacob Bridgeman",
+  country: "USA",
+  worldRanking: 50
+},
+// ── Past champions / major exemptions ──
+{
+  name: "Patrick Reed",
+  country: "USA",
+  worldRanking: 55
+}, {
+  name: "Jordan Spieth",
+  country: "USA",
+  worldRanking: 57
+}, {
+  name: "Brooks Koepka",
+  country: "USA",
+  worldRanking: 60
+}, {
+  name: "Cameron Smith",
+  country: "AUS",
+  worldRanking: 65
+}, {
+  name: "Adam Scott",
+  country: "AUS",
+  worldRanking: 70
+}, {
+  name: "Dustin Johnson",
+  country: "USA",
+  worldRanking: 72
+}, {
+  name: "Gary Woodland",
+  country: "USA",
+  worldRanking: 75
+}, {
+  name: "Brian Campbell",
+  country: "USA",
+  worldRanking: 80
+}, {
+  name: "Zach Johnson",
+  country: "USA",
+  worldRanking: 85
+}, {
+  name: "Kurt Kitayama",
+  country: "USA",
+  worldRanking: 88
+}, {
+  name: "Bubba Watson",
+  country: "USA",
+  worldRanking: 90
+}, {
+  name: "Danny Willett",
+  country: "ENG",
+  worldRanking: 95
+}, {
+  name: "Charl Schwartzel",
+  country: "RSA",
+  worldRanking: 100
+}, {
+  name: "Sergio Garcia",
+  country: "ESP",
+  worldRanking: 105
+}, {
+  name: "Phil Mickelson",
+  country: "USA",
+  worldRanking: 110
+}, {
+  name: "Jon Rahm",
+  country: "ESP",
+  worldRanking: 26
+}, {
+  name: "Carlos Ortiz",
+  country: "MEX",
+  worldRanking: 115
+}, {
+  name: "Li Haotong",
+  country: "CHN",
+  worldRanking: 118
+}, {
+  name: "Mike Weir",
+  country: "CAN",
+  worldRanking: 200
+}, {
+  name: "Fred Couples",
+  country: "USA",
+  worldRanking: 250
+}, {
+  name: "Jose Maria Olazabal",
+  country: "ESP",
+  worldRanking: 300
+}, {
+  name: "Vijay Singh",
+  country: "FIJ",
+  worldRanking: 350
+}, {
+  name: "Angel Cabrera",
+  country: "ARG",
+  worldRanking: 400
+},
+// Tiger Woods withdrew — confirmed out of 2026 Masters
+// ── National open winners (new 2026 category) ──
+{
+  name: "Marco Penge",
+  country: "ENG",
+  worldRanking: 130
+}, {
+  name: "Tom McKibbin",
+  country: "NIR",
+  worldRanking: 135
+}, {
+  name: "Naoyuki Kataoka",
+  country: "JPN",
+  worldRanking: 140
+}, {
+  name: "Rasmus Neergaard-Petersen",
+  country: "DEN",
+  worldRanking: 145
+}, {
+  name: "Casey Jarvis",
+  country: "RSA",
+  worldRanking: 150
+},
+// ── PGA Tour winners ──
+{
+  name: "Sepp Straka",
+  country: "AUT",
+  worldRanking: 28
+},
+// ── Amateurs ──
+{
+  name: "Jackson Herrington",
+  country: "USA",
+  worldRanking: null
+}, {
+  name: "Mason Howell",
+  country: "USA",
+  worldRanking: null
+}, {
+  name: "Ethan Fang",
+  country: "USA",
+  worldRanking: null
+}, {
+  name: "Fifa Laopakdee",
+  country: "THA",
+  worldRanking: null
+}, {
+  name: "Mateo Pulcini",
+  country: "ARG",
+  worldRanking: null
+}, {
+  name: "Brandon Holtz",
+  country: "USA",
+  worldRanking: null
+},
+// ── Valero TBD ──
+{
+  name: "Valero Texas Open Winner (TBD)",
+  country: "",
+  worldRanking: null
+}].reduce((acc, p) => {
+  // Deduplicate by name (some players appear in multiple categories above)
+  if (!acc.find(x => x.name === p.name)) acc.push(p);
+  return acc;
+}, []).map(p => ({
+  ...p,
+  r1: null,
+  r2: null,
+  r3: null,
+  r4: null,
+  score: null,
+  toPar: null,
+  cut: false,
+  position: null
+}));
+
+// ─── ESPN Golf API fetch ───────────────────────────────────────────────────
+// ESPN's public endpoint for the Masters (event 2025014 = Masters 2026 placeholder;
+// ESPN uses a consistent pattern — we fetch the current Masters event ID dynamically)
+const ESPN_MASTERS_URL = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?event=401703504";
+// 401703504 = 2025 Masters (most recent known); for 2026 ESPN will use a new ID.
+// The app tries this URL; if ESPN returns a different/new event, it still parses correctly.
+
+function parseESPN(data) {
+  var _data$events, _event$competitions, _competition$competit;
+  // ESPN scoreboard → our leaderboard schema
+  const event = data === null || data === void 0 || (_data$events = data.events) === null || _data$events === void 0 ? void 0 : _data$events[0];
+  if (!event) throw new Error("No event data from ESPN");
+  const competition = (_event$competitions = event.competitions) === null || _event$competitions === void 0 ? void 0 : _event$competitions[0];
+  if (!competition) throw new Error("No competition data from ESPN");
+  const players = (_competition$competit = competition.competitors) !== null && _competition$competit !== void 0 ? _competition$competit : [];
+  if (players.length === 0) throw new Error("No players in ESPN data");
+  return players.map(c => {
+    var _c$statistics, _getRound, _getRound2, _getRound3, _getRound4, _c$status, _c$status2, _c$status$position$id, _c$status3, _c$status4, _c$athlete, _athlete$displayName, _ref3, _athlete$flag$alt, _athlete$flag;
+    const stats = (_c$statistics = c.statistics) !== null && _c$statistics !== void 0 ? _c$statistics : [];
+    const getRound = label => {
+      const s = stats.find(x => x.name === label || x.abbreviation === label);
+      const v = s ? parseInt(s.displayValue, 10) : null;
+      return isNaN(v) ? null : v;
+    };
+    const r1 = (_getRound = getRound("R1")) !== null && _getRound !== void 0 ? _getRound : getRound("round1");
+    const r2 = (_getRound2 = getRound("R2")) !== null && _getRound2 !== void 0 ? _getRound2 : getRound("round2");
+    const r3 = (_getRound3 = getRound("R3")) !== null && _getRound3 !== void 0 ? _getRound3 : getRound("round3");
+    const r4 = (_getRound4 = getRound("R4")) !== null && _getRound4 !== void 0 ? _getRound4 : getRound("round4");
+    const toPar = (() => {
+      const s = stats.find(x => x.name === "scoreToPar" || x.abbreviation === "SCORE");
+      if (!s) return null;
+      const v = parseInt(s.displayValue, 10);
+      return isNaN(v) ? null : v;
+    })();
+    const totalStat = stats.find(x => x.name === "totalScore" || x.abbreviation === "TOT");
+    const score = totalStat ? parseInt(totalStat.displayValue, 10) : null;
+    const cut = ((_c$status = c.status) === null || _c$status === void 0 || (_c$status = _c$status.type) === null || _c$status === void 0 ? void 0 : _c$status.name) === "STATUS_CUT" || ((_c$status2 = c.status) === null || _c$status2 === void 0 ? void 0 : _c$status2.displayValue) === "CUT";
+    const position = parseInt((_c$status$position$id = (_c$status3 = c.status) === null || _c$status3 === void 0 || (_c$status3 = _c$status3.position) === null || _c$status3 === void 0 ? void 0 : _c$status3.id) !== null && _c$status$position$id !== void 0 ? _c$status$position$id : (_c$status4 = c.status) === null || _c$status4 === void 0 ? void 0 : _c$status4.period, 10) || null;
+    const athlete = (_c$athlete = c.athlete) !== null && _c$athlete !== void 0 ? _c$athlete : {};
+    return {
+      name: (_athlete$displayName = athlete.displayName) !== null && _athlete$displayName !== void 0 ? _athlete$displayName : "Unknown",
+      country: (_ref3 = (_athlete$flag$alt = (_athlete$flag = athlete.flag) === null || _athlete$flag === void 0 ? void 0 : _athlete$flag.alt) !== null && _athlete$flag$alt !== void 0 ? _athlete$flag$alt : athlete.nationality) !== null && _ref3 !== void 0 ? _ref3 : "",
+      worldRanking: null,
+      // ESPN doesn't expose OWGR here
+      r1: cut && r3 === null ? r1 : r1,
+      r2: cut && r3 === null ? r2 : r2,
+      r3: cut ? null : r3,
+      r4: cut ? null : r4,
+      score: isNaN(score) ? null : score,
+      toPar,
+      cut,
+      position: cut ? null : position
+    };
+  }).filter(p => p.name !== "Unknown");
+}
+async function fetchFromESPN() {
+  const res = await fetch(ESPN_MASTERS_URL, {
+    cache: "no-store"
+  });
+  if (!res.ok) throw new Error(`ESPN returned ${res.status}`);
+  const data = await res.json();
+  const players = parseESPN(data);
+  if (players.length < 10) throw new Error("ESPN returned too few players — likely wrong event");
+  return {
+    players,
+    source: "ESPN"
+  };
+}
+
+// Main fetch: try ESPN for live scores; fall back to hardcoded field pre-tournament
+async function fetchLeaderboard() {
+  try {
+    const result = await fetchFromESPN();
+    // ESPN returned data — merge scores onto known field so names stay consistent
+    const espnMap = {};
+    result.players.forEach(p => {
+      espnMap[p.name.toLowerCase()] = p;
+    });
+
+    // Start with hardcoded field (has all players + OWGR)
+    const merged = FIELD_2026.map(p => {
+      const espn = espnMap[p.name.toLowerCase()];
+      if (espn) return {
+        ...p,
+        ...espn,
+        worldRanking: p.worldRanking
+      }; // keep our OWGR
+      return p;
+    });
+
+    // Add any ESPN players not in our hardcoded list (e.g. Valero winner)
+    result.players.forEach(p => {
+      if (!merged.find(m => m.name.toLowerCase() === p.name.toLowerCase())) {
+        merged.push(p);
+      }
+    });
+    return {
+      players: merged,
+      source: "ESPN"
+    };
+  } catch (e) {
+    // ESPN unavailable — return hardcoded field with no scores (pre-tournament state)
+    return {
+      players: FIELD_2026,
+      source: "hardcoded",
+      error: e.message
+    };
+  }
+}
+
+// ─── Countdown hook ────────────────────────────────────────────────────────
+function useCountdown(target) {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const diff = target - now;
+  if (diff <= 0) return {
+    locked: true,
+    display: "LOCKED"
+  };
+  const d = Math.floor(diff / 86400000);
+  const h = Math.floor(diff % 86400000 / 3600000);
+  const m = Math.floor(diff % 3600000 / 60000);
+  const s = Math.floor(diff % 60000 / 1000);
+  return {
+    locked: false,
+    display: d > 0 ? `${d}d ${h}h ${m}m ${s}s` : `${h}h ${m}m ${s}s`
+  };
+}
+const toParStr = n => {
+  if (n === null || n === undefined) return "—";
+  if (n === 0) return "E";
+  return n > 0 ? `+${n}` : `${n}`;
+};
+const ROUND_LABELS = ["R1", "R2", "R3", "R4"];
+
+// ─── Main App ──────────────────────────────────────────────────────────────
+function MastersPool() {
+  var _scoredEntries$0$roun, _scoredEntries$;
+  const [tab, setTab] = useState("standings");
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [error, setError] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const [manualScores, setManualScores] = useState([]);
+  const [dataSource, setDataSource] = useState(null);
+  const [espnError, setEspnError] = useState(null);
+  const [showManualPanel, setShowManualPanel] = useState(false);
+  const [manualInput, setManualInput] = useState("");
+  const [manualParseError, setManualParseError] = useState(null);
+  const [dbError, setDbError] = useState(null);
+  const [dbLoading, setDbLoading] = useState(false);
+  // Generate a stable device ID for this browser session
+  const deviceId = useRef(localStorage.getItem("mastersDeviceId") || (() => {
+    const id = Math.random().toString(36).slice(2);
+    localStorage.setItem("mastersDeviceId", id);
+    return id;
+  })());
+  const [entryName, setEntryName] = useState("");
+  const [picks, setPicks] = useState([]);
+  const [winnerPick, setWinnerPick] = useState("");
+  const [winnerSearch, setWinnerSearch] = useState("");
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("ranking");
+  const [expandedEntry, setExpandedEntry] = useState(null);
+  const [commPassword, setCommPassword] = useState("");
+  const [commUnlocked, setCommUnlocked] = useState(false);
+  const [commError, setCommError] = useState(null);
+  const COMM_PASSWORD = "Henry123!";
+  const {
+    locked,
+    display: lockDisplay
+  } = useCountdown(LOCK_TIME);
+
+  // Last round number that was pushed to the visible standings.
+  // Auto-updates only push when this number increases (new round fully closed).
+  const lastPublishedRound = useRef(0);
+
+  // Merge manual scores on top of ESPN data (manual overrides ESPN for that player)
+  const mergeWithManual = useCallback((espnPlayers, manual) => {
+    if (!manual || manual.length === 0) return espnPlayers;
+    return espnPlayers.map(p => {
+      const m = manual.find(x => x.name === p.name);
+      return m ? {
+        ...p,
+        ...m
+      } : p;
+    });
+  }, []);
+  const applyLeaderboard = useCallback((players, isManual, isManualOnly, forceUpdate) => {
+    const completed = roundsFullyComplete(players);
+    if (forceUpdate || completed > lastPublishedRound.current) {
+      setLeaderboard(players);
+      setLastUpdated(new Date());
+      lastPublishedRound.current = completed;
+      setDataSource(isManualOnly ? "manual" : "ESPN");
+    }
+  }, []);
+  const load = useCallback(async function () {
+    let manual = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : false;
+    if (manual) setLoading(true);
+    setError(null);
+    setEspnError(null);
+
+    // Always try ESPN first
+    let espnPlayers = null;
+    let fetchedSource = null;
+    try {
+      const result = await fetchLeaderboard();
+      espnPlayers = result.players;
+      fetchedSource = result.source;
+      // If ESPN had an error but returned hardcoded field, note it
+      if (result.error) {
+        setEspnError("ESPN unavailable — showing known field, no live scores yet");
+      } else {
+        setEspnError(null);
+      }
+    } catch (e) {
+      setEspnError(e.message);
+    }
+
+    // Decide what leaderboard to show
+    const currentManual = manualScores;
+    if (espnPlayers && espnPlayers.length > 0) {
+      // Got players (ESPN live or hardcoded field) — merge any manual overrides on top
+      const merged = mergeWithManual(espnPlayers, currentManual);
+      applyLeaderboard(merged, false, false, manual);
+    } else if (currentManual && currentManual.length > 0) {
+      // Fallback to manual scores only
+      applyLeaderboard(currentManual, true, true, manual);
+    } else {
+      setError("Could not load field. Try refreshing.");
+    }
+    if (manual) setLoading(false);
+  }, [manualScores, mergeWithManual, applyLeaderboard]);
+
+  // Initial load on mount
+  useEffect(() => {
+    load(true);
+  }, []);
+
+  // Auto-check every 5 min, but only during tournament play windows (Thu–Sun, 8am–8pm ET)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const et = new Date(new Date().toLocaleString("en-US", {
+        timeZone: "America/New_York"
+      }));
+      const day = et.getDay(); // 0=Sun,4=Thu,5=Fri,6=Sat
+      const hour = et.getHours();
+      const isTournamentDay = day === 4 || day === 5 || day === 6 || day === 0;
+      const isDuringPlay = hour >= 8 && hour < 21;
+      if (isTournamentDay && isDuringPlay) load(false);
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  // Load entries from Supabase on mount + poll every 30s for real-time sync
+  useEffect(() => {
+    const loadEntries = async () => {
+      try {
+        const data = await db.getEntries();
+        setEntries(data.map(r => ({
+          id: r.id,
+          name: r.name,
+          picks: r.picks,
+          winnerPick: r.winner_pick,
+          deviceId: r.device_id,
+          createdAt: r.created_at
+        })));
+        setDbError(null);
+      } catch (e) {
+        setDbError("Could not reach database: " + e.message);
+      }
+    };
+    loadEntries();
+    const interval = setInterval(loadEntries, 30000); // poll every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load manual scores from Supabase on mount
+  useEffect(() => {
+    const loadManual = async () => {
+      try {
+        const data = await db.getManualScores();
+        if (data && data.length > 0) {
+          setManualScores(data[0].scores || []);
+        }
+      } catch (e) {
+        // Silent fail — manual scores optional
+      }
+    };
+    loadManual();
+  }, []);
+
+  // Re-apply leaderboard when manual scores change
+  useEffect(() => {
+    if (espnError && manualScores.length > 0) {
+      applyLeaderboard(manualScores, true, true, true);
+    }
+  }, [manualScores, espnError, applyLeaderboard]);
+  const displayPlayers = useMemo(() => {
+    let list = [...leaderboard];
+    const q = search.trim().toLowerCase();
+    if (q) list = list.filter(p => p.name.toLowerCase().includes(q));
+    if (sortBy === "ranking") list.sort((a, b) => {
+      var _a$worldRanking, _b$worldRanking;
+      return ((_a$worldRanking = a.worldRanking) !== null && _a$worldRanking !== void 0 ? _a$worldRanking : 9999) - ((_b$worldRanking = b.worldRanking) !== null && _b$worldRanking !== void 0 ? _b$worldRanking : 9999);
+    });else if (sortBy === "alpha") list.sort((a, b) => a.name.localeCompare(b.name));else if (sortBy === "score") {
+      list.sort((a, b) => {
+        if (a.toPar === null && b.toPar === null) return 0;
+        if (a.toPar === null) return 1;
+        if (b.toPar === null) return -1;
+        return a.toPar - b.toPar;
+      });
+    }
+    return list;
+  }, [leaderboard, search, sortBy]);
+
+  // Determine tournament winner from leaderboard (position === 1, not MTC)
+  const tournamentWinner = useMemo(() => {
+    const w = leaderboard.find(p => !p.cut && p.position === 1);
+    return w ? w.name : null;
+  }, [leaderboard]);
+  const scoredEntries = useMemo(() => {
+    const s = entries.map(e => ({
+      ...e,
+      ...scoreEntry(e.picks, leaderboard)
+    }));
+    s.sort((a, b) => {
+      if (a.total === null && b.total === null) return 0;
+      if (a.total === null) return 1;
+      if (b.total === null) return -1;
+      if (a.total !== b.total) return a.total - b.total;
+      // Tiebreaker: whoever picked the tournament winner wins
+      // (only applies once tournament is over and winner is known)
+      if (tournamentWinner) {
+        const aHit = a.winnerPick === tournamentWinner ? 1 : 0;
+        const bHit = b.winnerPick === tournamentWinner ? 1 : 0;
+        if (aHit !== bHit) return bHit - aHit; // higher = better
+      }
+      return 0; // still tied → commissioner decides
+    });
+    return s;
+  }, [entries, leaderboard, tournamentWinner]);
+  const tournamentStarted = leaderboard.some(p => p.r1 != null);
+  const roundsPlayed = (_scoredEntries$0$roun = (_scoredEntries$ = scoredEntries[0]) === null || _scoredEntries$ === void 0 ? void 0 : _scoredEntries$.roundsPlayed) !== null && _scoredEntries$0$roun !== void 0 ? _scoredEntries$0$roun : 0;
+  const tournamentOver = leaderboard.some(p => !p.cut && p.r4 != null);
+  function togglePick(name) {
+    if (locked) return;
+    setPicks(prev => {
+      if (prev.includes(name)) return prev.filter(n => n !== name);
+      if (prev.length >= 8) return prev;
+      return [...prev, name];
+    });
+  }
+  async function saveEntry() {
+    if (locked) return;
+    if (!entryName.trim() || picks.length < 8 || !winnerPick.trim()) return;
+    // Block second submission from same device
+    if (entries.some(e => e.deviceId === deviceId.current)) {
+      setDbError("You've already submitted an entry from this device.");
+      setTimeout(() => setDbError(null), 4000);
+      return;
+    }
+    setDbLoading(true);
+    try {
+      const result = await db.addEntry({
+        name: entryName.trim(),
+        picks: [...picks],
+        winnerPick: winnerPick.trim() || null,
+        deviceId: deviceId.current
+      });
+      // Add returned entry (with server-generated UUID) to local state immediately
+      if (result && result[0]) {
+        setEntries(prev => [...prev, {
+          id: result[0].id,
+          name: result[0].name,
+          picks: result[0].picks,
+          winnerPick: result[0].winner_pick,
+          deviceId: result[0].device_id,
+          createdAt: result[0].created_at
+        }]);
+      }
+      setEntryName("");
+      setPicks([]);
+      setWinnerPick("");
+      setWinnerSearch("");
+      setSearch("");
+      setTab("standings");
+      setDbError(null);
+    } catch (e) {
+      setDbError("Failed to save entry: " + e.message);
+    } finally {
+      setDbLoading(false);
+    }
+  }
+  async function deleteEntry(id) {
+    if (locked) return;
+    // Only allow deleting your own entries (matched by deviceId)
+    const entry = entries.find(e => e.id === id);
+    if (!entry) return;
+    if (entry.deviceId && entry.deviceId !== deviceId.current) {
+      setDbError("You can only delete your own entries.");
+      setTimeout(() => setDbError(null), 3000);
+      return;
+    }
+    try {
+      await db.deleteEntry(id);
+      setEntries(prev => prev.filter(e => e.id !== id));
+      setDbError(null);
+    } catch (e) {
+      setDbError("Failed to delete entry: " + e.message);
+    }
+  }
+
+  // Commissioner: delete any entry regardless of device
+  async function commDeleteEntry(id) {
+    if (!commUnlocked) return;
+    try {
+      await db.deleteEntry(id);
+      setEntries(prev => prev.filter(e => e.id !== id));
+    } catch (e) {
+      setDbError("Failed to delete: " + e.message);
+    }
+  }
+
+  // Commissioner: clear ALL entries
+  async function commClearAll() {
+    if (!commUnlocked) return;
+    if (!window.confirm("Delete ALL entries? This cannot be undone.")) return;
+    try {
+      await sbFetch("entries", {
+        method: "DELETE"
+      });
+      setEntries([]);
+    } catch (e) {
+      setDbError("Failed to clear entries: " + e.message);
+    }
+  }
+
+  // ── CSV Export ──────────────────────────────────────────────────────────
+  function exportCSV() {
+    if (entries.length === 0) return;
+    const PAR = 72;
+    const toParStr = n => {
+      if (n == null) return "";
+      if (n === 0) return "E";
+      return n > 0 ? `+${n}` : `${n}`;
+    };
+
+    // Header rows
+    const rows = [];
+
+    // Title block
+    rows.push(["2026 Masters Pool — Entry Sheet"]);
+    rows.push([`Exported: ${new Date().toLocaleString()}`]);
+    rows.push([`Picks locked: Thursday April 9, 2026 · 8:00 AM ET`]);
+    rows.push([]); // blank
+
+    // Column headers
+    rows.push(["Rank", "Entry Name", "Winner Pick", "Pick 1", "Pick 2", "Pick 3", "Pick 4", "Pick 5", "Pick 6", "Pick 7", "Pick 8", "Total Score", "Notes"]);
+
+    // Score entries if tournament has started, else just list picks
+    const scored = entries.map(e => ({
+      ...e,
+      ...scoreEntry(e.picks, leaderboard)
+    }));
+    scored.sort((a, b) => {
+      if (a.total === null && b.total === null) return 0;
+      if (a.total === null) return 1;
+      if (b.total === null) return -1;
+      if (a.total !== b.total) return a.total - b.total;
+      if (tournamentWinner) {
+        const aHit = a.winnerPick === tournamentWinner ? 1 : 0;
+        const bHit = b.winnerPick === tournamentWinner ? 1 : 0;
+        if (aHit !== bHit) return bHit - aHit;
+      }
+      return 0;
+    });
+    scored.forEach((e, rank) => {
+      var _e$total;
+      const picks8 = [...e.picks];
+      while (picks8.length < 8) picks8.push("");
+      const winnerCorrect = tournamentWinner ? e.winnerPick === tournamentWinner ? "✓ Correct" : "✗ Wrong" : "";
+      const mtcNote = e.mtcInTop6 > 0 ? `${e.mtcInTop6} MTC in top 6` : "";
+      rows.push([rank + 1, e.name, e.winnerPick ? `${e.winnerPick}${winnerCorrect ? " — " + winnerCorrect : ""}` : "", ...picks8, (_e$total = e.total) !== null && _e$total !== void 0 ? _e$total : "Pre-tournament", mtcNote]);
+    });
+    rows.push([]); // blank
+    rows.push([]); // blank
+
+    // ── Sheet 2 equivalent: scoring rules ──
+    rows.push(["SCORING RULES"]);
+    rows.push(["Pick 8 players · Best 6 cumulative scores count"]);
+    rows.push(["Made-cut players score all 4 rounds normally"]);
+    rows.push(["MTC players filling a top-6 slot: R1+R2 average used for R3 and R4"]);
+    rows.push(["Tiebreaker: entry that picked the tournament winner"]);
+    rows.push(["Still tied: Commissioner decides"]);
+    rows.push([]);
+
+    // ── Per-round breakdown (if tournament started) ──
+    if (leaderboard.length > 0 && leaderboard.some(p => p.r1 != null)) {
+      rows.push(["PER-ENTRY ROUND BREAKDOWN"]);
+      rows.push([]);
+      scored.forEach(e => {
+        var _e$total2, _e$top, _e$enrichedPicks;
+        rows.push([`${e.name} — Total: ${(_e$total2 = e.total) !== null && _e$total2 !== void 0 ? _e$total2 : "—"}`]);
+        rows.push(["  Player", "MTC?", "R1", "R2", "R3", "R4", "Running Total", "Counting?"]);
+        ((_e$top = e.top6) !== null && _e$top !== void 0 ? _e$top : []).forEach(p => {
+          var _p$roundScores, _p$runningTotal;
+          const [s1, s2, s3, s4] = (_p$roundScores = p.roundScores) !== null && _p$roundScores !== void 0 ? _p$roundScores : [null, null, null, null];
+          rows.push(["  " + p.name, p.isMTC ? "MTC" : "", s1 !== null && s1 !== void 0 ? s1 : "", s2 !== null && s2 !== void 0 ? s2 : "", p.isMTC && s3 != null ? `${s3} (avg)` : s3 !== null && s3 !== void 0 ? s3 : "", p.isMTC && s4 != null ? `${s4} (avg)` : s4 !== null && s4 !== void 0 ? s4 : "", (_p$runningTotal = p.runningTotal) !== null && _p$runningTotal !== void 0 ? _p$runningTotal : "", "YES"]);
+        });
+        ((_e$enrichedPicks = e.enrichedPicks) !== null && _e$enrichedPicks !== void 0 ? _e$enrichedPicks : []).filter(p => {
+          var _e$top2;
+          return !((_e$top2 = e.top6) !== null && _e$top2 !== void 0 && _e$top2.some(t => t.name === p.name)) && !p.missing;
+        }).forEach(p => {
+          var _lb$r, _lb$r2, _lb$r3, _lb$r4, _lb$score;
+          const lb = leaderboard.find(l => l.name === p.name);
+          rows.push(["  " + p.name, p.cut ? "MTC" : "", (_lb$r = lb === null || lb === void 0 ? void 0 : lb.r1) !== null && _lb$r !== void 0 ? _lb$r : "", (_lb$r2 = lb === null || lb === void 0 ? void 0 : lb.r2) !== null && _lb$r2 !== void 0 ? _lb$r2 : "", (_lb$r3 = lb === null || lb === void 0 ? void 0 : lb.r3) !== null && _lb$r3 !== void 0 ? _lb$r3 : "", (_lb$r4 = lb === null || lb === void 0 ? void 0 : lb.r4) !== null && _lb$r4 !== void 0 ? _lb$r4 : "", (_lb$score = lb === null || lb === void 0 ? void 0 : lb.score) !== null && _lb$score !== void 0 ? _lb$score : "", "no"]);
+        });
+        rows.push([]);
+      });
+    }
+
+    // Convert to CSV string
+    const csv = rows.map(row => row.map(cell => {
+      const s = String(cell !== null && cell !== void 0 ? cell : "");
+      // Escape cells containing commas, quotes, or newlines
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    }).join(",")).join("\n");
+
+    // Trigger download
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `masters-pool-2026-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ── shared search/sort bar ──
+  const SearchBar = () => /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: search,
+    onChange: e => setSearch(e.target.value),
+    placeholder: "Search players\u2026",
+    style: {
+      flex: 1,
+      padding: "9px 12px",
+      borderRadius: 8,
+      background: "#0a1410",
+      border: "1px solid #2a4a35",
+      color: CREAM,
+      fontSize: 13,
+      outline: "none"
+    }
+  }), /*#__PURE__*/React.createElement("select", {
+    value: sortBy,
+    onChange: e => setSortBy(e.target.value),
+    style: {
+      background: "#0a1410",
+      border: "1px solid #2a4a35",
+      color: "#5a8a6a",
+      borderRadius: 8,
+      padding: "0 10px",
+      fontSize: 11,
+      cursor: "pointer"
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "ranking"
+  }, "By Ranking"), /*#__PURE__*/React.createElement("option", {
+    value: "alpha"
+  }, "A \u2192 Z"), /*#__PURE__*/React.createElement("option", {
+    value: "score"
+  }, "By Score")));
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      minHeight: "100vh",
+      background: GREEN_DARK,
+      fontFamily: "'Georgia', serif"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "linear-gradient(160deg,#0a1a10 0%,#1b4332 55%,#2a5c44 100%)",
+      borderBottom: `3px solid ${GOLD}`,
+      padding: "18px 16px 14px",
+      textAlign: "center",
+      position: "relative"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9,
+      letterSpacing: 5,
+      color: GOLD,
+      textTransform: "uppercase",
+      marginBottom: 2
+    }
+  }, "Augusta National \xB7 2026"), /*#__PURE__*/React.createElement("h1", {
+    style: {
+      margin: 0,
+      color: CREAM,
+      fontSize: 24,
+      fontWeight: "normal",
+      letterSpacing: 2
+    }
+  }, "\u26F3 Masters Pool"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "#5a8a6a",
+      marginTop: 4
+    }
+  }, "Pick 8 \xB7 Best 6 Count \xB7 Low Total Wins"), tournamentStarted && roundsPlayed > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: GOLD,
+      marginTop: 4,
+      letterSpacing: 1
+    }
+  }, "\uD83D\uDCCD Through Round ", roundsPlayed), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      marginTop: 8,
+      padding: "4px 14px",
+      borderRadius: 20,
+      background: locked ? "rgba(100,20,20,0.5)" : "rgba(201,168,76,0.12)",
+      border: `1px solid ${locked ? "#7f1d1d" : GOLD}`
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: locked ? "#fca5a5" : GOLD
+    }
+  }, locked ? "🔒 Picks are LOCKED" : `🕐 Locks in ${lockDisplay}`)), lastUpdated && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9,
+      color: "#3a5a45",
+      marginTop: 4
+    }
+  }, roundsPlayed > 0 ? `R${roundsPlayed} scores` : "Pre-tournament", " · ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: dataSource === "ESPN" ? "#4ade80" : dataSource === "manual" ? GOLD : "#3a5a45"
+    }
+  }, dataSource === "ESPN" ? "ESPN ✓" : dataSource === "manual" ? "Manual ✓" : "—"), " · ", lastUpdated.toLocaleTimeString()), espnError && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9,
+      color: "#f87171",
+      marginTop: 2
+    }
+  }, "\u26A0 ESPN unavailable \u2014 enter scores in the Scores tab"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9,
+      color: "#2a4a30",
+      marginTop: 2
+    }
+  }, "\u2601 Live sync via Supabase \xB7 updates every 30s"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => load(true),
+    disabled: loading,
+    style: {
+      position: "absolute",
+      right: 12,
+      top: 16,
+      background: "transparent",
+      border: `1px solid ${GOLD}40`,
+      color: GOLD,
+      borderRadius: 6,
+      padding: "5px 10px",
+      cursor: "pointer",
+      fontSize: 12
+    }
+  }, loading ? "…" : "↻")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      background: "#0d1f15",
+      borderBottom: "1px solid #1a2e1e"
+    }
+  }, [["standings", `🏆 Standings${entries.length ? ` (${entries.length})` : ""}`], ["pick", locked ? "🔒 Pick Sheet" : "✏️ Pick Sheet"], ["field", "👥 Full Field"], ["manual", espnError ? "⚠️ Scores" : "📝 Scores"], ["admin", commUnlocked ? "🔑 Admin" : "🔒 Admin"]].map(_ref4 => {
+    let [key, label] = _ref4;
+    return /*#__PURE__*/React.createElement("button", {
+      key: key,
+      onClick: () => setTab(key),
+      style: {
+        flex: 1,
+        padding: "11px 4px",
+        border: "none",
+        cursor: "pointer",
+        background: tab === key ? ACCENT : "transparent",
+        color: tab === key ? CREAM : "#4b7a5a",
+        fontSize: 11,
+        borderBottom: `2px solid ${tab === key ? GOLD : "transparent"}`,
+        transition: "all 0.15s"
+      }
+    }, label);
+  })), error && /*#__PURE__*/React.createElement("div", {
+    style: {
+      margin: 12,
+      background: "#3d0f0f",
+      color: "#fca5a5",
+      padding: "10px 14px",
+      borderRadius: 8,
+      fontSize: 12
+    }
+  }, "\u26A0 ", error), dbError && /*#__PURE__*/React.createElement("div", {
+    style: {
+      margin: "0 12px 8px",
+      background: "#3d1a0f",
+      color: "#fbbf24",
+      padding: "8px 14px",
+      borderRadius: 8,
+      fontSize: 11
+    }
+  }, "\u26A0 ", dbError), /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 680,
+      margin: "0 auto"
+    }
+  }, tab === "standings" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 12px"
+    }
+  }, entries.length > 0 && /*#__PURE__*/React.createElement("button", {
+    onClick: exportCSV,
+    style: {
+      width: "100%",
+      marginBottom: 14,
+      padding: "10px 14px",
+      borderRadius: 8,
+      border: `1px solid #2a4a35`,
+      background: "#0a1410",
+      color: "#5a8a6a",
+      fontSize: 12,
+      cursor: "pointer",
+      letterSpacing: 0.5,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 14
+    }
+  }, "\u2B07"), "Export All Entries to Spreadsheet", /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: "#3a5a45"
+    }
+  }, ".csv")), scoredEntries.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "center",
+      padding: "52px 20px",
+      color: "#3a5a45"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 40,
+      marginBottom: 12
+    }
+  }, "\u26F3"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#5a8a6a",
+      fontSize: 14,
+      marginBottom: 6
+    }
+  }, "No entries yet"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12
+    }
+  }, "Use the Pick Sheet tab to add entries")) : scoredEntries.map((entry, rank) => {
+    var _entry$top2, _entry$total, _entry$enrichedPicks;
+    const isExpanded = expandedEntry === entry.id;
+    const isLeading = rank === 0 && tournamentStarted;
+    return /*#__PURE__*/React.createElement("div", {
+      key: entry.id,
+      style: {
+        background: isLeading ? "linear-gradient(135deg,#172a1f,#1e3a2a)" : "#111d16",
+        border: `1px solid ${isLeading ? GOLD : "#1e3228"}`,
+        borderRadius: 10,
+        marginBottom: 10,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      onClick: () => setExpandedEntry(isExpanded ? null : entry.id),
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "10px 14px",
+        cursor: "pointer"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 26,
+        height: 26,
+        borderRadius: "50%",
+        flexShrink: 0,
+        background: isLeading ? GOLD : "#1e3a2a",
+        color: isLeading ? GREEN_DARK : "#5a8a6a",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 11,
+        fontWeight: "bold"
+      }
+    }, rank + 1), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: CREAM,
+        fontSize: 14
+      }
+    }, entry.name), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: "#3a5a45"
+      }
+    }, entry.picks.length, " picks", entry.mtcInTop6 > 0 && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "#7a6a3a",
+        marginLeft: 6
+      }
+    }, "\xB7 ", entry.mtcInTop6, " MTC in top 6", entry.mtcInTop6 > 0 ? " (avg scoring R3/R4)" : "")))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10
+      }
+    }, tournamentStarted && entry.total !== null ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: GOLD,
+        fontSize: 20,
+        fontWeight: "bold",
+        lineHeight: 1
+      }
+    }, entry.total), locked && entry.winnerPick && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: "#3a5a45"
+      }
+    }, "\uD83C\uDFC6 ", entry.winnerPick, tournamentWinner && /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginLeft: 4,
+        color: entry.winnerPick === tournamentWinner ? "#4ade80" : "#f87171"
+      }
+    }, entry.winnerPick === tournamentWinner ? "✓" : "✗")), !locked && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: "#2a4a30",
+        fontStyle: "italic"
+      }
+    }, "Winner pick hidden until lock")) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#3a5a45",
+        fontSize: 11
+      }
+    }, "Pre-tournament"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        alignItems: "center"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "#3a5a45",
+        fontSize: 12
+      }
+    }, isExpanded ? "▲" : "▼"), !locked && /*#__PURE__*/React.createElement("button", {
+      onClick: e => {
+        e.stopPropagation();
+        deleteEntry(entry.id);
+      },
+      style: {
+        background: "transparent",
+        border: "none",
+        color: "#2a4a30",
+        cursor: "pointer",
+        fontSize: 13,
+        padding: 0
+      }
+    }, "\u2715")))), !locked && /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "6px 14px 10px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "#2a4a30",
+        fontStyle: "italic",
+        padding: "8px 12px",
+        background: "#0a1410",
+        borderRadius: 6,
+        border: "1px solid #1a2618",
+        textAlign: "center"
+      }
+    }, "\uD83D\uDD12 Picks hidden until Thursday 8:00 AM ET")), !isExpanded && locked && /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "0 14px 10px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "repeat(2,1fr)",
+        gap: 4
+      }
+    }, entry.picks.map(name => {
+      var _entry$top;
+      const inTop6 = (_entry$top = entry.top6) === null || _entry$top === void 0 ? void 0 : _entry$top.some(p => p.name === name);
+      const p = leaderboard.find(l => l.name === name);
+      const isMTC = p === null || p === void 0 ? void 0 : p.cut;
+      return /*#__PURE__*/React.createElement("div", {
+        key: name,
+        style: {
+          fontSize: 11,
+          padding: "5px 8px",
+          borderRadius: 5,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          background: inTop6 ? isMTC ? "#1e1506" : "#112018" : "#0a120d",
+          border: `1px solid ${inTop6 ? isMTC ? "#5a4010" : "#243d28" : "#111a12"}`
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: inTop6 ? isMTC ? "#c9a84c" : "#86efac" : "#2a4a30",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          maxWidth: "72%"
+        }
+      }, name), /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 10,
+          flexShrink: 0,
+          color: isMTC ? "#7a6030" : (p === null || p === void 0 ? void 0 : p.toPar) < 0 ? "#4ade80" : (p === null || p === void 0 ? void 0 : p.toPar) > 0 ? "#f87171" : "#4b6b56"
+        }
+      }, isMTC ? "MTC" : toParStr(p === null || p === void 0 ? void 0 : p.toPar)));
+    }))), isExpanded && locked && /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "0 14px 12px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: "#3a5a45",
+        letterSpacing: 1,
+        marginBottom: 8,
+        textTransform: "uppercase"
+      }
+    }, "Top 6 Scoring Breakdown"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "1fr 36px 36px 36px 36px 52px",
+        gap: 4,
+        padding: "5px 8px",
+        background: "#0a1410",
+        borderRadius: "6px 6px 0 0",
+        color: "#3a5a45",
+        fontSize: 10,
+        letterSpacing: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", null, "PLAYER"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, "R1"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, "R2"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, "R3"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, "R4"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, "TOTAL")), (_entry$top2 = entry.top6) === null || _entry$top2 === void 0 ? void 0 : _entry$top2.map((p, idx) => {
+      var _p$roundScores2, _p$runningTotal2;
+      const [s1, s2, s3, s4] = (_p$roundScores2 = p.roundScores) !== null && _p$roundScores2 !== void 0 ? _p$roundScores2 : [null, null, null, null];
+      const isSimR3 = p.isMTC && roundsPlayed >= 3;
+      const isSimR4 = p.isMTC && roundsPlayed >= 4;
+      const cellStyle = (val, sim) => ({
+        textAlign: "right",
+        fontSize: 12,
+        color: val == null ? "#2a4a30" : sim ? "#8a7a50" : CREAM,
+        fontStyle: sim ? "italic" : "normal"
+      });
+      return /*#__PURE__*/React.createElement("div", {
+        key: p.name,
+        style: {
+          display: "grid",
+          gridTemplateColumns: "1fr 36px 36px 36px 36px 52px",
+          gap: 4,
+          padding: "7px 8px",
+          background: idx % 2 === 0 ? "#0f1c14" : "#0d1810",
+          borderTop: "1px solid #111c14"
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          minWidth: 0
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 12,
+          color: p.isMTC ? "#c9a84c" : CREAM,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap"
+        }
+      }, p.name), p.isMTC && /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 9,
+          color: "#7a6030"
+        }
+      }, "MTC \xB7 avg ", p.avgScore, "/rd \u2192 R3, R4")), /*#__PURE__*/React.createElement("div", {
+        style: cellStyle(s1, false)
+      }, s1 !== null && s1 !== void 0 ? s1 : "—"), /*#__PURE__*/React.createElement("div", {
+        style: cellStyle(s2, false)
+      }, s2 !== null && s2 !== void 0 ? s2 : "—"), /*#__PURE__*/React.createElement("div", {
+        style: cellStyle(s3, isSimR3)
+      }, roundsPlayed >= 3 ? s3 !== null && s3 !== void 0 ? s3 : "—" : "—"), /*#__PURE__*/React.createElement("div", {
+        style: cellStyle(s4, isSimR4)
+      }, roundsPlayed >= 4 ? s4 !== null && s4 !== void 0 ? s4 : "—" : "—"), /*#__PURE__*/React.createElement("div", {
+        style: {
+          textAlign: "right",
+          fontWeight: "bold",
+          fontSize: 13,
+          color: GOLD
+        }
+      }, (_p$runningTotal2 = p.runningTotal) !== null && _p$runningTotal2 !== void 0 ? _p$runningTotal2 : "—"));
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "1fr 36px 36px 36px 36px 52px",
+        gap: 4,
+        padding: "7px 8px",
+        background: "#1a2e1e",
+        borderTop: `1px solid ${GOLD}40`,
+        borderRadius: "0 0 6px 6px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "#5a8a6a",
+        letterSpacing: 0.5
+      }
+    }, "ENTRY TOTAL"), /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        fontWeight: "bold",
+        fontSize: 15,
+        color: GOLD
+      }
+    }, (_entry$total = entry.total) !== null && _entry$total !== void 0 ? _entry$total : "—")), ((_entry$enrichedPicks = entry.enrichedPicks) === null || _entry$enrichedPicks === void 0 ? void 0 : _entry$enrichedPicks.filter(p => {
+      var _entry$top3;
+      return !((_entry$top3 = entry.top6) !== null && _entry$top3 !== void 0 && _entry$top3.some(t => t.name === p.name)) && !p.missing;
+    }).length) > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        color: "#2a4a30",
+        letterSpacing: 1,
+        marginBottom: 4,
+        textTransform: "uppercase"
+      }
+    }, "Not Counting"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 4
+      }
+    }, entry.enrichedPicks.filter(p => {
+      var _entry$top4;
+      return !((_entry$top4 = entry.top6) !== null && _entry$top4 !== void 0 && _entry$top4.some(t => t.name === p.name)) && !p.missing;
+    }).map(p => /*#__PURE__*/React.createElement("div", {
+      key: p.name,
+      style: {
+        fontSize: 10,
+        padding: "3px 8px",
+        borderRadius: 4,
+        background: "#0a1410",
+        border: "1px solid #1a2618",
+        color: "#2a4a30"
+      }
+    }, p.name, " ", p.cut ? "(MTC)" : toParStr(p.toPar))))), entry.mtcInTop6 > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 8,
+        fontSize: 10,
+        color: "#7a6a3a",
+        fontStyle: "italic"
+      }
+    }, "* Italic scores are simulated (R1+R2 avg) for MTC players")));
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      background: "#0a1410",
+      border: "1px solid #1a2618",
+      borderRadius: 8,
+      padding: "12px 14px",
+      fontSize: 11,
+      color: "#3a5a45",
+      lineHeight: 2
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: GOLD,
+      fontSize: 9,
+      letterSpacing: 2,
+      marginBottom: 4,
+      textTransform: "uppercase"
+    }
+  }, "Scoring Rules"), /*#__PURE__*/React.createElement("div", null, "Pick 8 \xB7 Best 6 cumulative scores count"), /*#__PURE__*/React.createElement("div", null, "Made-cut players score all 4 rounds normally"), /*#__PURE__*/React.createElement("div", null, "MTC players filling a top-6 slot: R1+R2 avg used for R3 & R4"), /*#__PURE__*/React.createElement("div", null, "Tiebreaker: entry that picked the tournament winner"), /*#__PURE__*/React.createElement("div", null, "Still tied \u2192 commissioner decides"))), tab === "pick" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 12px"
+    }
+  }, locked && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#2d0a0a",
+      border: "1px solid #7f1d1d",
+      borderRadius: 8,
+      padding: "10px 14px",
+      marginBottom: 12,
+      color: "#fca5a5",
+      fontSize: 13,
+      textAlign: "center"
+    }
+  }, "\uD83D\uDD12 The Masters has begun \u2014 picks are locked"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      color: "#5a8a6a",
+      fontSize: 10,
+      letterSpacing: 1.5,
+      display: "block",
+      marginBottom: 5,
+      textTransform: "uppercase"
+    }
+  }, "Your Name"), /*#__PURE__*/React.createElement("input", {
+    value: entryName,
+    onChange: e => setEntryName(e.target.value),
+    disabled: locked,
+    placeholder: "e.g. Robert's Picks",
+    style: {
+      width: "100%",
+      padding: "10px 12px",
+      borderRadius: 8,
+      background: "#0a1410",
+      border: "1px solid #2a4a35",
+      color: CREAM,
+      fontSize: 14,
+      outline: "none",
+      boxSizing: "border-box",
+      opacity: locked ? 0.5 : 1
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      color: "#5a8a6a",
+      fontSize: 10,
+      letterSpacing: 1.5,
+      display: "block",
+      marginBottom: 5,
+      textTransform: "uppercase"
+    }
+  }, "Pick the Winner (Tiebreaker)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "relative"
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: winnerSearch || winnerPick,
+    onChange: e => {
+      setWinnerSearch(e.target.value);
+      if (!e.target.value) setWinnerPick("");
+    },
+    disabled: locked,
+    placeholder: "Search for your winner pick\u2026",
+    style: {
+      width: "100%",
+      padding: "10px 12px",
+      borderRadius: 8,
+      background: winnerPick ? "#1a3228" : "#0a1410",
+      border: `1px solid ${winnerPick ? GREEN_MED : "#2a4a35"}`,
+      color: CREAM,
+      fontSize: 13,
+      outline: "none",
+      boxSizing: "border-box",
+      opacity: locked ? 0.5 : 1
+    }
+  }), winnerPick && !winnerSearch && /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: "absolute",
+      right: 10,
+      top: "50%",
+      transform: "translateY(-50%)",
+      color: "#4ade80",
+      fontSize: 12
+    }
+  }, "\u2713")), winnerSearch && !winnerPick && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#0a1410",
+      border: "1px solid #2a4a35",
+      borderRadius: 8,
+      marginTop: 4,
+      maxHeight: 180,
+      overflowY: "auto"
+    }
+  }, leaderboard.filter(p => p.name.toLowerCase().includes(winnerSearch.toLowerCase())).slice(0, 12).map(p => /*#__PURE__*/React.createElement("div", {
+    key: p.name,
+    onClick: () => {
+      setWinnerPick(p.name);
+      setWinnerSearch("");
+    },
+    style: {
+      padding: "9px 12px",
+      cursor: "pointer",
+      display: "flex",
+      justifyContent: "space-between",
+      color: CREAM,
+      fontSize: 13,
+      borderBottom: "1px solid #1a2618"
+    },
+    onMouseEnter: e => e.currentTarget.style.background = "#1a2e1e",
+    onMouseLeave: e => e.currentTarget.style.background = "transparent"
+  }, /*#__PURE__*/React.createElement("span", null, p.name), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#5a8a6a",
+      fontSize: 11
+    }
+  }, p.country || "", p.worldRanking ? ` #${p.worldRanking}` : ""))), leaderboard.filter(p => p.name.toLowerCase().includes(winnerSearch.toLowerCase())).length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 12,
+      color: "#3a5a45",
+      fontSize: 12
+    }
+  }, "No players found")), winnerPick && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 6,
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#1a3228",
+      border: `1px solid ${GREEN_MED}`,
+      borderRadius: 16,
+      padding: "4px 12px",
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      color: CREAM,
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\uD83C\uDFC6 ", winnerPick), !locked && /*#__PURE__*/React.createElement("span", {
+    onClick: () => setWinnerPick(""),
+    style: {
+      color: "#4b6b56",
+      cursor: "pointer",
+      fontSize: 14,
+      lineHeight: 1
+    }
+  }, "\xD7")))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#5a8a6a",
+      fontSize: 10,
+      letterSpacing: 1.5,
+      textTransform: "uppercase"
+    }
+  }, "Pick Players (", picks.length, "/8)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 5
+    }
+  }, Array.from({
+    length: 8
+  }).map((_, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      width: 9,
+      height: 9,
+      borderRadius: "50%",
+      background: i < picks.length ? GOLD : "#1e3228",
+      transition: "background 0.2s"
+    }
+  })))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#3a5a45",
+      fontSize: 11,
+      marginBottom: 10
+    }
+  }, picks.length === 0 ? "Tap a player to select them" : picks.length < 6 ? `Need ${6 - picks.length} more (min 6 for scoring)` : picks.length < 8 ? `${8 - picks.length} more slots available` : "All 8 picked!"), picks.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: 5,
+      marginBottom: 12,
+      padding: "10px 12px",
+      background: "#0a1410",
+      borderRadius: 8,
+      border: "1px solid #1a2618"
+    }
+  }, picks.map(name => /*#__PURE__*/React.createElement("div", {
+    key: name,
+    style: {
+      background: "#1a3228",
+      border: `1px solid ${GREEN_MED}`,
+      borderRadius: 16,
+      padding: "4px 10px",
+      display: "flex",
+      alignItems: "center",
+      gap: 6,
+      color: CREAM,
+      fontSize: 11
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      maxWidth: 110,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap"
+    }
+  }, name), !locked && /*#__PURE__*/React.createElement("span", {
+    onClick: () => togglePick(name),
+    style: {
+      color: "#4b6b56",
+      cursor: "pointer",
+      fontSize: 14,
+      lineHeight: 1
+    }
+  }, "\xD7")))), /*#__PURE__*/React.createElement(SearchBar, null), loading && leaderboard.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "center",
+      padding: 40,
+      color: "#3a5a45"
+    }
+  }, "Loading field\u2026") : /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid #1a2618",
+      borderRadius: 8,
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "28px 1fr 50px 40px",
+      gap: 6,
+      padding: "7px 12px",
+      background: "#0a1410",
+      color: "#3a5a45",
+      fontSize: 10,
+      letterSpacing: 1,
+      position: "sticky",
+      top: 0,
+      zIndex: 2
+    }
+  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "PLAYER"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "SCORE"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "POS")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxHeight: 380,
+      overflowY: "auto"
+    }
+  }, displayPlayers.map((p, i) => {
+    const sel = picks.includes(p.name);
+    const disabledAdd = !sel && picks.length >= 8;
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.name,
+      onClick: () => !locked && !disabledAdd && togglePick(p.name),
+      style: {
+        display: "grid",
+        gridTemplateColumns: "28px 1fr 50px 40px",
+        gap: 6,
+        padding: "9px 12px",
+        alignItems: "center",
+        cursor: locked || disabledAdd ? "default" : "pointer",
+        background: sel ? "rgba(45,106,79,0.2)" : i % 2 === 0 ? "#0f1c14" : "#0d1810",
+        borderTop: "1px solid #111c14",
+        opacity: disabledAdd ? 0.35 : 1,
+        transition: "background 0.1s"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 18,
+        height: 18,
+        borderRadius: 4,
+        border: `2px solid ${sel ? GREEN_MED : "#2a4a35"}`,
+        background: sel ? GREEN_MED : "transparent",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        transition: "all 0.15s"
+      }
+    }, sel && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: CREAM,
+        fontSize: 10
+      }
+    }, "\u2713")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: CREAM,
+        fontSize: 13,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap"
+      }
+    }, p.name), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#2a4a35",
+        fontSize: 9
+      }
+    }, p.country || "", p.worldRanking ? ` · #${p.worldRanking} OWGR` : "")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        fontWeight: "bold",
+        fontSize: 13,
+        color: p.toPar === null ? "#2a4a30" : p.toPar < 0 ? "#4ade80" : p.toPar > 0 ? "#f87171" : CREAM
+      }
+    }, toParStr(p.toPar)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        fontSize: 11,
+        color: p.cut ? "#6b3a3a" : "#3a5a45"
+      }
+    }, p.cut ? "MTC" : p.position ? `T${p.position}` : "—"));
+  }), displayPlayers.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 24,
+      textAlign: "center",
+      color: "#3a5a45",
+      fontSize: 13
+    }
+  }, "No players found"))), /*#__PURE__*/React.createElement("button", {
+    onClick: saveEntry,
+    disabled: locked || !entryName.trim() || picks.length < 8 || !winnerPick.trim() || entries.some(e => e.deviceId === deviceId.current),
+    style: {
+      width: "100%",
+      marginTop: 12,
+      padding: 14,
+      borderRadius: 8,
+      border: "none",
+      background: !locked && entryName.trim() && picks.length > 0 ? GOLD : "#141f18",
+      color: !locked && entryName.trim() && picks.length > 0 ? GREEN_DARK : "#2a4a30",
+      fontSize: 14,
+      fontWeight: "bold",
+      letterSpacing: 1,
+      cursor: !locked && entryName.trim() && picks.length > 0 ? "pointer" : "default",
+      transition: "all 0.2s"
+    }
+  }, locked ? "🔒 Picks Locked" : entries.some(e => e.deviceId === deviceId.current) ? "✓ Entry Submitted" : dbLoading ? "Saving…" : !entryName.trim() ? "Enter your name above" : picks.length < 8 ? `Select ${8 - picks.length} more player${8 - picks.length !== 1 ? "s" : ""}` : !winnerPick.trim() ? "Pick your winner above" : "Submit Entry →")), tab === "field" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 12px"
+    }
+  }, /*#__PURE__*/React.createElement(SearchBar, null), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#3a5a45",
+      fontSize: 11,
+      marginBottom: 8
+    }
+  }, leaderboard.length, " players \xB7 ", tournamentStarted ? `Through R${roundsPlayed}` : "Pre-tournament"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid #1a2618",
+      borderRadius: 8,
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "36px 1fr 46px 36px 32px 32px 32px 32px",
+      gap: 4,
+      padding: "7px 12px",
+      background: "#0a1410",
+      color: "#3a5a45",
+      fontSize: 9,
+      letterSpacing: 1,
+      position: "sticky",
+      top: 0,
+      zIndex: 2
+    }
+  }, /*#__PURE__*/React.createElement("div", null, "POS"), /*#__PURE__*/React.createElement("div", null, "PLAYER"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "SCORE"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "TOT"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "R1"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "R2"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "R3"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "R4")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxHeight: 520,
+      overflowY: "auto"
+    }
+  }, loading && leaderboard.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 40,
+      textAlign: "center",
+      color: "#3a5a45"
+    }
+  }, "Loading\u2026"), displayPlayers.map((p, i) => {
+    var _p$position, _p$score;
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.name,
+      style: {
+        display: "grid",
+        gridTemplateColumns: "36px 1fr 46px 36px 32px 32px 32px 32px",
+        gap: 4,
+        padding: "7px 12px",
+        alignItems: "center",
+        background: i % 2 === 0 ? "#0f1c14" : "#0c1710",
+        borderTop: "1px solid #101810",
+        color: p.cut ? "#2a4a35" : CREAM
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: p.cut ? "#2a3a30" : "#5a8a6a",
+        fontSize: 11
+      }
+    }, p.cut ? "—" : (_p$position = p.position) !== null && _p$position !== void 0 ? _p$position : "—"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap"
+      }
+    }, p.name), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        color: "#2a4a35"
+      }
+    }, p.country, p.worldRanking ? ` #${p.worldRanking}` : "", p.cut && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "#5a2a2a",
+        marginLeft: 4
+      }
+    }, "MTC"))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        fontWeight: "bold",
+        fontSize: 13,
+        color: p.toPar === null ? "#2a4a30" : p.toPar < 0 ? "#4ade80" : p.toPar > 0 ? "#f87171" : CREAM
+      }
+    }, toParStr(p.toPar)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        color: "#3a5a45",
+        fontSize: 11
+      }
+    }, (_p$score = p.score) !== null && _p$score !== void 0 ? _p$score : "—"), [p.r1, p.r2, p.r3, p.r4].map((r, ri) => /*#__PURE__*/React.createElement("div", {
+      key: ri,
+      style: {
+        textAlign: "right",
+        color: "#2a4a35",
+        fontSize: 10
+      }
+    }, r !== null && r !== void 0 ? r : "—")));
+  })))), tab === "admin" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 12px"
+    }
+  }, !commUnlocked ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 400,
+      margin: "0 auto"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: GOLD,
+      fontSize: 11,
+      letterSpacing: 2,
+      marginBottom: 12,
+      textTransform: "uppercase"
+    }
+  }, "Commissioner Access"), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    value: commPassword,
+    onChange: e => setCommPassword(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        if (commPassword === COMM_PASSWORD) {
+          setCommUnlocked(true);
+          setCommError(null);
+        } else {
+          setCommError("Incorrect password");
+        }
+      }
+    },
+    placeholder: "Enter commissioner password",
+    style: {
+      width: "100%",
+      padding: "12px 14px",
+      borderRadius: 8,
+      background: "#0a1410",
+      border: `1px solid ${commError ? "#7f1d1d" : "#2a4a35"}`,
+      color: CREAM,
+      fontSize: 16,
+      outline: "none",
+      boxSizing: "border-box",
+      marginBottom: 8
+    }
+  }), commError && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#fca5a5",
+      fontSize: 12,
+      marginBottom: 8
+    }
+  }, commError), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      if (commPassword === COMM_PASSWORD) {
+        setCommUnlocked(true);
+        setCommError(null);
+      } else {
+        setCommError("Incorrect password");
+      }
+    },
+    style: {
+      width: "100%",
+      padding: 12,
+      borderRadius: 8,
+      border: "none",
+      background: GOLD,
+      color: GREEN_DARK,
+      fontSize: 14,
+      fontWeight: "bold",
+      cursor: "pointer"
+    }
+  }, "Unlock \u2192")) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: GOLD,
+      fontSize: 11,
+      letterSpacing: 2,
+      textTransform: "uppercase"
+    }
+  }, "\uD83D\uDD11 Commissioner Panel"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setCommUnlocked(false);
+      setCommPassword("");
+    },
+    style: {
+      background: "transparent",
+      border: "1px solid #2a4a35",
+      color: "#5a8a6a",
+      borderRadius: 6,
+      padding: "4px 10px",
+      cursor: "pointer",
+      fontSize: 11
+    }
+  }, "Lock")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#0a1410",
+      border: "1px solid #1a2618",
+      borderRadius: 8,
+      padding: "12px 14px",
+      marginBottom: 14,
+      fontSize: 12,
+      color: "#5a8a6a",
+      lineHeight: 1.8
+    }
+  }, /*#__PURE__*/React.createElement("div", null, "Total entries: ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: CREAM
+    }
+  }, entries.length)), /*#__PURE__*/React.createElement("div", null, "Lock status: ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: locked ? "#fca5a5" : "#4ade80"
+    }
+  }, locked ? "🔒 LOCKED" : "🔓 Open")), /*#__PURE__*/React.createElement("div", null, "Tournament started: ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: CREAM
+    }
+  }, tournamentStarted ? "Yes" : "No")), /*#__PURE__*/React.createElement("div", null, "Data source: ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: CREAM
+    }
+  }, dataSource || "—"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#5a8a6a",
+      fontSize: 10,
+      letterSpacing: 1.5,
+      marginBottom: 8,
+      textTransform: "uppercase"
+    }
+  }, "All Entries \u2014 tap \u2715 to delete any"), entries.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#3a5a45",
+      fontSize: 13,
+      marginBottom: 12
+    }
+  }, "No entries yet"), entries.map(entry => /*#__PURE__*/React.createElement("div", {
+    key: entry.id,
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: "10px 14px",
+      marginBottom: 6,
+      borderRadius: 8,
+      background: "#0a1410",
+      border: "1px solid #1a2618"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: CREAM,
+      fontSize: 13
+    }
+  }, entry.name), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#3a5a45",
+      fontSize: 10
+    }
+  }, entry.picks.length, " picks \xB7 Winner: ", entry.winnerPick || "none"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#2a4a30",
+      fontSize: 9
+    }
+  }, entry.picks.join(", "))), /*#__PURE__*/React.createElement("button", {
+    onClick: () => commDeleteEntry(entry.id),
+    style: {
+      background: "#3d0f0f",
+      border: "none",
+      color: "#fca5a5",
+      borderRadius: 6,
+      padding: "6px 10px",
+      cursor: "pointer",
+      fontSize: 13
+    }
+  }, "\u2715"))), entries.length > 0 && /*#__PURE__*/React.createElement("button", {
+    onClick: commClearAll,
+    style: {
+      width: "100%",
+      marginTop: 12,
+      padding: 12,
+      borderRadius: 8,
+      border: "1px solid #7f1d1d",
+      background: "#3d0f0f",
+      color: "#fca5a5",
+      fontSize: 13,
+      cursor: "pointer"
+    }
+  }, "\u26A0 Delete ALL Entries"), /*#__PURE__*/React.createElement("button", {
+    onClick: exportCSV,
+    style: {
+      width: "100%",
+      marginTop: 8,
+      padding: 12,
+      borderRadius: 8,
+      border: "1px solid #2a4a35",
+      background: "#0a1410",
+      color: "#5a8a6a",
+      fontSize: 13,
+      cursor: "pointer"
+    }
+  }, "\u2B07 Export All Entries to CSV"))), tab === "manual" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 12px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: espnError ? "#2d0a0a" : "#0a1a10",
+      border: `1px solid ${espnError ? "#7f1d1d" : "#1a3228"}`,
+      borderRadius: 8,
+      padding: "12px 14px",
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: espnError ? "#fca5a5" : "#4ade80",
+      fontSize: 12,
+      marginBottom: 4
+    }
+  }, espnError ? "⚠ ESPN unavailable — manual scores active" : "✓ ESPN is working — manual scores optional override"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#3a5a45",
+      fontSize: 11
+    }
+  }, espnError ? "Enter end-of-day scores below. The commissioner pastes scores once per round after play finishes." : "ESPN is loading scores automatically. You can still manually override individual players if needed.")), manualScores.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#5a8a6a",
+      fontSize: 10,
+      letterSpacing: 1.5,
+      marginBottom: 8,
+      textTransform: "uppercase"
+    }
+  }, "Current Manual Scores (", manualScores.length, " players)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid #1a2618",
+      borderRadius: 8,
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "1fr 36px 36px 36px 36px 48px",
+      gap: 4,
+      padding: "6px 12px",
+      background: "#0a1410",
+      color: "#3a5a45",
+      fontSize: 9,
+      letterSpacing: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", null, "PLAYER"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "R1"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "R2"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "R3"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "R4"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "CUT")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxHeight: 280,
+      overflowY: "auto"
+    }
+  }, manualScores.map((p, i) => {
+    var _p$r, _p$r2, _p$r3, _p$r4;
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.name,
+      style: {
+        display: "grid",
+        gridTemplateColumns: "1fr 36px 36px 36px 36px 48px",
+        gap: 4,
+        padding: "7px 12px",
+        alignItems: "center",
+        background: i % 2 === 0 ? "#0f1c14" : "#0d1810",
+        borderTop: "1px solid #111c14",
+        color: p.cut ? "#3a5a45" : CREAM,
+        fontSize: 12
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap"
+      }
+    }, p.name), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        color: "#5a8a6a"
+      }
+    }, (_p$r = p.r1) !== null && _p$r !== void 0 ? _p$r : "—"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        color: "#5a8a6a"
+      }
+    }, (_p$r2 = p.r2) !== null && _p$r2 !== void 0 ? _p$r2 : "—"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        color: "#5a8a6a"
+      }
+    }, (_p$r3 = p.r3) !== null && _p$r3 !== void 0 ? _p$r3 : "—"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        color: "#5a8a6a"
+      }
+    }, (_p$r4 = p.r4) !== null && _p$r4 !== void 0 ? _p$r4 : "—"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        color: p.cut ? "#f87171" : "#3a5a45",
+        fontSize: 10
+      }
+    }, p.cut ? "MTC" : "—"));
+  }))), /*#__PURE__*/React.createElement("button", {
+    onClick: async () => {
+      try {
+        await db.clearManualScores();
+      } catch (e) {}
+      setManualScores([]);
+      setManualInput("");
+      setManualParseError(null);
+    },
+    style: {
+      marginTop: 8,
+      width: "100%",
+      padding: "8px",
+      borderRadius: 6,
+      border: "none",
+      background: "#2d0a0a",
+      color: "#fca5a5",
+      fontSize: 12,
+      cursor: "pointer"
+    }
+  }, "Clear All Manual Scores")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#5a8a6a",
+      fontSize: 10,
+      letterSpacing: 1.5,
+      marginBottom: 6,
+      textTransform: "uppercase"
+    }
+  }, "Paste / Enter Scores"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#3a5a45",
+      fontSize: 11,
+      marginBottom: 8,
+      lineHeight: 1.7
+    }
+  }, "One player per line. Format:", " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: GOLD,
+      fontFamily: "monospace"
+    }
+  }, "Player Name, R1, R2, R3, R4, CUT"), /*#__PURE__*/React.createElement("br", null), "Use ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: GOLD,
+      fontFamily: "monospace"
+    }
+  }, "-"), " for rounds not yet played. Use ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: GOLD,
+      fontFamily: "monospace"
+    }
+  }, "CUT"), " at end if missed cut.", /*#__PURE__*/React.createElement("br", null), "Example: ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#7aaf8a",
+      fontFamily: "monospace",
+      fontSize: 10
+    }
+  }, "Scottie Scheffler, 66, 68, -, -, -"), /*#__PURE__*/React.createElement("br", null), "Example: ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#7aaf8a",
+      fontFamily: "monospace",
+      fontSize: 10
+    }
+  }, "Tiger Woods, 77, 79, -, -, CUT")), /*#__PURE__*/React.createElement("textarea", {
+    value: manualInput,
+    onChange: e => {
+      setManualInput(e.target.value);
+      setManualParseError(null);
+    },
+    placeholder: "Scottie Scheffler, 67, 65, -, -, -\nRory McIlroy, 70, 68, 66, -, -\nTiger Woods, 77, 79, -, -, CUT",
+    rows: 8,
+    style: {
+      width: "100%",
+      padding: "10px 12px",
+      borderRadius: 8,
+      background: "#0a1410",
+      border: `1px solid ${manualParseError ? "#7f1d1d" : "#2a4a35"}`,
+      color: CREAM,
+      fontSize: 12,
+      outline: "none",
+      boxSizing: "border-box",
+      fontFamily: "monospace",
+      resize: "vertical",
+      lineHeight: 1.6
+    }
+  }), manualParseError && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#fca5a5",
+      fontSize: 11,
+      marginTop: 4
+    }
+  }, "\u26A0 ", manualParseError), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      // Parse the pasted text
+      const lines = manualInput.split("\n").map(l => l.trim()).filter(Boolean);
+      const parsed = [];
+      const errors = [];
+      lines.forEach((line, i) => {
+        var _parts$, _parts$2;
+        const parts = line.split(",").map(p => p.trim());
+        if (parts.length < 2) {
+          errors.push(`Line ${i + 1}: too few columns`);
+          return;
+        }
+        const name = parts[0];
+        if (!name) {
+          errors.push(`Line ${i + 1}: missing name`);
+          return;
+        }
+        const parseRound = v => {
+          if (!v || v === "-" || v === "") return null;
+          const n = parseInt(v, 10);
+          return isNaN(n) ? null : n;
+        };
+        const r1 = parseRound(parts[1]);
+        const r2 = parseRound(parts[2]);
+        const r3 = parseRound(parts[3]);
+        const r4 = parseRound(parts[4]);
+        const cutFlag = ((_parts$ = parts[5]) === null || _parts$ === void 0 ? void 0 : _parts$.toUpperCase()) === "CUT" || ((_parts$2 = parts[4]) === null || _parts$2 === void 0 ? void 0 : _parts$2.toUpperCase()) === "CUT";
+        // toPar: sum rounds vs par 72 each
+        const rounds = [r1, r2, r3, r4].filter(r => r !== null);
+        const toPar = rounds.length > 0 ? rounds.reduce((a, b) => a + b, 0) - 72 * rounds.length : null;
+        const score = rounds.length > 0 ? rounds.reduce((a, b) => a + b, 0) : null;
+        // Position assigned after sort
+        parsed.push({
+          name,
+          r1,
+          r2,
+          r3: cutFlag ? null : r3,
+          r4: cutFlag ? null : r4,
+          cut: cutFlag,
+          toPar,
+          score,
+          position: null,
+          country: "",
+          worldRanking: null
+        });
+      });
+      if (errors.length > 0) {
+        setManualParseError(errors.join(" · "));
+        return;
+      }
+      if (parsed.length === 0) {
+        setManualParseError("No valid players found — check format");
+        return;
+      }
+      // Assign positions based on toPar
+      const active = parsed.filter(p => !p.cut).sort((a, b) => {
+        var _a$toPar, _b$toPar;
+        return ((_a$toPar = a.toPar) !== null && _a$toPar !== void 0 ? _a$toPar : 999) - ((_b$toPar = b.toPar) !== null && _b$toPar !== void 0 ? _b$toPar : 999);
+      });
+      active.forEach((p, i) => {
+        p.position = i + 1;
+      });
+      // Save to Supabase
+      db.upsertManualScores(parsed).catch(() => {});
+      setManualScores(parsed);
+      setManualParseError(null);
+    },
+    style: {
+      width: "100%",
+      marginTop: 10,
+      padding: 12,
+      borderRadius: 8,
+      border: "none",
+      background: manualInput.trim() ? GOLD : "#141f18",
+      color: manualInput.trim() ? GREEN_DARK : "#2a4a30",
+      fontSize: 14,
+      fontWeight: "bold",
+      cursor: manualInput.trim() ? "pointer" : "default"
+    }
+  }, "Apply Manual Scores \u2192"))));
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(MastersPool));
+  </script>
+</body>
+</html>
