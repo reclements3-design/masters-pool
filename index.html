@@ -1192,8 +1192,8 @@ function MastersPool() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 12,
-      letterSpacing: 5,
+      fontSize: 13,
+      letterSpacing: 4,
       color: GOLD,
       textTransform: "uppercase",
       marginBottom: 2
@@ -1208,9 +1208,9 @@ function MastersPool() {
     }
   }, "\u26F3 Masters Pool"), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 14,
-      color: "#5a8a6a",
-      marginTop: 4
+      fontSize: 17,
+      color: "#a0c8b0",
+      marginTop: 8
     }
   }, "Pick 8 \xB7 Best 6 Count \xB7 Low Total Wins"), tournamentStarted && roundsPlayed > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1232,18 +1232,18 @@ function MastersPool() {
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontSize: 13,
+      fontSize: 16,
       color: locked ? "#fca5a5" : GOLD
     }
   }, locked ? "🔒 Picks are LOCKED" : `🕐 Locks in ${lockDisplay}`)), lastUpdated && /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 9,
-      color: "#3a5a45",
-      marginTop: 4
+      fontSize: 13,
+      color: "#8ab89a",
+      marginTop: 6
     }
   }, roundsPlayed > 0 ? `R${roundsPlayed} scores` : "Pre-tournament", " · ", /*#__PURE__*/React.createElement("span", {
     style: {
-      color: dataSource === "ESPN" ? "#4ade80" : dataSource === "manual" ? GOLD : "#3a5a45"
+      color: dataSource === "ESPN" ? "#4ade80" : dataSource === "manual" ? GOLD : "#5a8a6a"
     }
   }, dataSource === "ESPN" ? "ESPN ✓" : dataSource === "manual" ? "Manual ✓" : "—"), " · ", lastUpdated.toLocaleTimeString()), espnError && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1285,7 +1285,7 @@ function MastersPool() {
       onClick: () => setTab(key),
       style: {
         flex: 1,
-        padding: "11px 4px",
+        padding: "16px 4px",
         border: "none",
         cursor: "pointer",
         background: tab === key ? ACCENT : "transparent",
