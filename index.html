@@ -1202,7 +1202,7 @@ function MastersPool() {
     style: {
       margin: 0,
       color: CREAM,
-      fontSize: 24,
+      fontSize: 28,
       fontWeight: "normal",
       letterSpacing: 2
     }
@@ -1346,7 +1346,7 @@ function MastersPool() {
     }
   }, "\u2B07"), "Export All Entries to Spreadsheet", /*#__PURE__*/React.createElement("span", {
     style: {
-      fontSize: 10,
+      fontSize: 12,
       color: "#3a5a45"
     }
   }, ".csv")), scoredEntries.length === 0 ? /*#__PURE__*/React.createElement("div", {
@@ -1415,11 +1415,11 @@ function MastersPool() {
     }, rank + 1), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
       style: {
         color: CREAM,
-        fontSize: 14
+        fontSize: 16
       }
     }, entry.name), /*#__PURE__*/React.createElement("div", {
       style: {
-        fontSize: 10,
+        fontSize: 12,
         color: "#3a5a45"
       }
     }, entry.picks.length, " picks", entry.mtcInTop6 > 0 && /*#__PURE__*/React.createElement("span", {
@@ -1446,7 +1446,7 @@ function MastersPool() {
       }
     }, entry.total), locked && entry.winnerPick && /*#__PURE__*/React.createElement("div", {
       style: {
-        fontSize: 10,
+        fontSize: 12,
         color: "#3a5a45"
       }
     }, "\uD83C\uDFC6 ", entry.winnerPick, tournamentWinner && /*#__PURE__*/React.createElement("span", {
@@ -1553,7 +1553,7 @@ function MastersPool() {
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
-        fontSize: 10,
+        fontSize: 12,
         color: "#3a5a45",
         letterSpacing: 1,
         marginBottom: 8,
@@ -1770,7 +1770,7 @@ function MastersPool() {
       background: "#0a1410",
       border: "1px solid #2a4a35",
       color: CREAM,
-      fontSize: 14,
+      fontSize: 16,
       outline: "none",
       boxSizing: "border-box",
       opacity: locked ? 0.5 : 1
@@ -1919,7 +1919,7 @@ function MastersPool() {
   })))), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "#3a5a45",
-      fontSize: 11,
+      fontSize: 13,
       marginBottom: 10
     }
   }, picks.length === 0 ? "Tap a player to select them" : picks.length < 6 ? `Need ${6 - picks.length} more (min 6 for scoring)` : picks.length < 8 ? `${8 - picks.length} more slots available` : "All 8 picked!"), picks.length > 0 && /*#__PURE__*/React.createElement("div", {
@@ -2087,7 +2087,7 @@ function MastersPool() {
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         color: CREAM,
-        fontSize: 13,
+        fontSize: 15,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap"
@@ -2095,7 +2095,7 @@ function MastersPool() {
     }, p.name), /*#__PURE__*/React.createElement("div", {
       style: {
         color: "#2a4a35",
-        fontSize: 9
+        fontSize: 11
       }
     }, p.country || "", p.worldRanking ? ` · #${p.worldRanking} OWGR` : "")), /*#__PURE__*/React.createElement("div", {
       style: {
@@ -2129,7 +2129,7 @@ function MastersPool() {
       border: "none",
       background: !locked && entryName.trim() && picks.length > 0 ? GOLD : "#141f18",
       color: !locked && entryName.trim() && picks.length > 0 ? GREEN_DARK : "#2a4a30",
-      fontSize: 14,
+      fontSize: 16,
       fontWeight: "bold",
       letterSpacing: 1,
       cursor: !locked && entryName.trim() && picks.length > 0 ? "pointer" : "default",
