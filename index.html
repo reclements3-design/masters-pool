@@ -253,7 +253,7 @@ const FIELD_2026 = [
   country: "USA",
   worldRanking: 5
 }, {
-  name: "Ludvig Aberg",
+  name: "Ludvig Åberg",
   country: "SWE",
   worldRanking: 6
 }, {
@@ -369,11 +369,11 @@ const FIELD_2026 = [
   country: "ENG",
   worldRanking: 34
 }, {
-  name: "Rasmus Hojgaard",
+  name: "Rasmus Højgaard",
   country: "DEN",
   worldRanking: 35
 }, {
-  name: "Nicolai Hojgaard",
+  name: "Nicolai Højgaard",
   country: "DEN",
   worldRanking: 36
 }, {
@@ -389,7 +389,7 @@ const FIELD_2026 = [
   country: "NZL",
   worldRanking: 39
 }, {
-  name: "Nico Echavarria",
+  name: "Nicolas Echavarria",
   country: "COL",
   worldRanking: 40
 }, {
@@ -475,7 +475,7 @@ const FIELD_2026 = [
   country: "RSA",
   worldRanking: 100
 }, {
-  name: "Sergio Garcia",
+  name: "Sergio García",
   country: "ESP",
   worldRanking: 105
 }, {
@@ -483,7 +483,7 @@ const FIELD_2026 = [
   country: "MEX",
   worldRanking: 115
 }, {
-  name: "Li Haotong",
+  name: "Haotong Li",
   country: "CHN",
   worldRanking: 118
 }, {
@@ -495,7 +495,7 @@ const FIELD_2026 = [
   country: "USA",
   worldRanking: 250
 }, {
-  name: "Jose Maria Olazabal",
+  name: "José María Olazábal",
   country: "ESP",
   worldRanking: 300
 }, {
@@ -503,7 +503,7 @@ const FIELD_2026 = [
   country: "FIJ",
   worldRanking: 350
 }, {
-  name: "Angel Cabrera",
+  name: "Ángel Cabrera",
   country: "ARG",
   worldRanking: 400
 },
@@ -531,6 +531,7 @@ const FIELD_2026 = [
   worldRanking: 150
 },
 // ── PGA Tour winners ──
+// Sepp Straka already listed above
 // ── Amateurs ──
 {
   name: "Jackson Herrington",
@@ -557,12 +558,60 @@ const FIELD_2026 = [
   country: "USA",
   worldRanking: null
 },
-// ── Valero TBD ──
+// ── Additional OWGR Top 50 players ──
 {
-  name: "Valero Texas Open Winner (TBD)",
-  country: "",
-  worldRanking: null
-}].reduce((acc, p) => {
+  name: "Alex Noren",
+  country: "SWE",
+  worldRanking: 51
+}, {
+  name: "Aaron Rai",
+  country: "ENG",
+  worldRanking: 52
+}, {
+  name: "Kristoffer Reitan",
+  country: "NOR",
+  worldRanking: 53
+}, {
+  name: "Max Greyserman",
+  country: "USA",
+  worldRanking: 54
+}, {
+  name: "Michael Brennan",
+  country: "USA",
+  worldRanking: 56
+}, {
+  name: "Michael Kim",
+  country: "USA",
+  worldRanking: 58
+}, {
+  name: "Sami Valimaki",
+  country: "FIN",
+  worldRanking: 59
+}, {
+  name: "Ryan Gerard",
+  country: "USA",
+  worldRanking: 61
+}, {
+  name: "Si Woo Kim",
+  country: "KOR",
+  worldRanking: 62
+}, {
+  name: "John Keefer",
+  country: "USA",
+  worldRanking: 63
+}, {
+  name: "Samuel Stevens",
+  country: "USA",
+  worldRanking: 64
+},
+// ── Top 4 2025 PGA Championship ──
+{
+  name: "Davis Riley",
+  country: "USA",
+  worldRanking: 66
+}
+// ── Valero winner: J.J. Spaun (already in field via US Open exemption) ──
+].reduce((acc, p) => {
   // Deduplicate by name (some players appear in multiple categories above)
   if (!acc.find(x => x.name === p.name)) acc.push(p);
   return acc;
