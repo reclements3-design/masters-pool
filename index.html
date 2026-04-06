@@ -727,12 +727,7 @@ async function fetchLeaderboard() {
       return p;
     });
 
-    // Add any ESPN players not in our field
-    result.players.forEach(p => {
-      if (!merged.find(m => m.name.toLowerCase() === p.name.toLowerCase())) {
-        merged.push(p);
-      }
-    });
+   
     return {
       players: merged,
       source: "ESPN"
