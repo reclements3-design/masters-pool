@@ -717,12 +717,16 @@ async function fetchLeaderboard() {
       return p;
     });
 
-    // Add any ESPN players not in our hardcoded list (e.g. Valero winner)
-    result.players.forEach(p => {
-      if (!merged.find(m => m.name.toLowerCase() === p.name.toLowerCase())) {
-        merged.push(p);
-      }
-    });
+    // Only add ESPN players not in our field if tournament has started (R1 scores exist)
+    // Pre-tournament, ESPN returns the wrong event's field — don't merge unknowns
+    const tournamentHasStarted = result.players.some(p => p.r1 != null);
+    if (tournamentHasStarted) {
+      result.players.forEach(p => {
+        if (!merged.find(m => m.name.toLowerCase() === p.name.toLowerCase())) {
+          merged.push(p);
+        }
+      });
+    }
     return {
       players: merged,
       source: "ESPN"
