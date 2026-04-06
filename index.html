@@ -714,7 +714,7 @@ async function fetchLeaderboard() {
 
     // Tournament started — merge ESPN live scores onto our hardcoded field
     const espnMap = {};
-    result.players.forEach(p => {
+    if(result.players.some(q=>q.r1!=null))result.players.forEach(p => {
       espnMap[p.name.toLowerCase()] = p;
     });
     const merged = FIELD_2026.map(p => {
