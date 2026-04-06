@@ -700,39 +700,44 @@ async function fetchFromESPN() {
 async function fetchLeaderboard() {
   try {
     const result = await fetchFromESPN();
-    // ESPN returned data — merge scores onto known field so names stay consistent
+
+    // Check if Masters tournament has actually started (R1 scores exist)
+    const tournamentHasStarted = result.players.some(p => p.r1 != null);
+
+    // Pre-tournament: ESPN returns wrong event's field — use our hardcoded field only
+    if (!tournamentHasStarted) {
+      return {
+        players: FIELD_2026,
+        source: "ESPN"
+      };
+    }
+
+    // Tournament started — merge ESPN live scores onto our hardcoded field
     const espnMap = {};
     result.players.forEach(p => {
       espnMap[p.name.toLowerCase()] = p;
     });
-
-    // Start with hardcoded field (has all players + OWGR)
     const merged = FIELD_2026.map(p => {
       const espn = espnMap[p.name.toLowerCase()];
       if (espn) return {
         ...p,
         ...espn,
         worldRanking: p.worldRanking
-      }; // keep our OWGR
+      };
       return p;
     });
 
-    // Only add ESPN players not in our field if tournament has started (R1 scores exist)
-    // Pre-tournament, ESPN returns the wrong event's field — don't merge unknowns
-    const tournamentHasStarted = result.players.some(p => p.r1 != null);
-    if (tournamentHasStarted) {
-      result.players.forEach(p => {
-        if (!merged.find(m => m.name.toLowerCase() === p.name.toLowerCase())) {
-          merged.push(p);
-        }
-      });
-    }
+    // Add any ESPN players not in our field
+    result.players.forEach(p => {
+      if (!merged.find(m => m.name.toLowerCase() === p.name.toLowerCase())) {
+        merged.push(p);
+      }
+    });
     return {
       players: merged,
       source: "ESPN"
     };
   } catch (e) {
-    // ESPN unavailable — return hardcoded field with no scores (pre-tournament state)
     return {
       players: FIELD_2026,
       source: "hardcoded",
