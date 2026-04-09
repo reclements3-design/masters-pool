@@ -26,7 +26,7 @@ const {
 } = React;
 
 // Masters 2026 first tee time: Thursday April 9, 2026 at 8:00 AM ET
-2026-04-09T23:00:00-04:00
+const LOCK_TIME = new Date("2026-04-09T08:00:00-04:00");
 
 // ─── Supabase config ───────────────────────────────────────────────────────
 const SB_URL = "https://izdgawomevpnjccjjhwc.supabase.co";
@@ -89,6 +89,11 @@ const GOLD = "#c9a84c";
 const GREEN_DARK = "#1b4332";
 const GREEN_MED = "#40916c";
 const CREAM = "#fdf8ee";
+
+// ─── Name normalization (handles ESPN vs official name differences) ──────────
+function normName(s) {
+  return s.toLowerCase().replace(/[åä]/g, 'a').replace(/[éè]/g, 'e').replace(/[íì]/g, 'i').replace(/[óò]/g, 'o').replace(/[úù]/g, 'u').replace(/[ñ]/g, 'n').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+}
 
 // ─── Scoring Engine ────────────────────────────────────────────────────────
 // Rules:
@@ -156,7 +161,7 @@ function scoreEntry(picks, leaderboard) {
 
   // Enrich picks with leaderboard data
   const enriched = picks.map(name => {
-    const p = leaderboard.find(l => l.name.toLowerCase() === name.toLowerCase());
+    const p = leaderboard.find(l => normName(l.name) === normName(name));
     if (!p) return {
       name,
       missing: true,
@@ -714,11 +719,11 @@ async function fetchLeaderboard() {
 
     // Tournament started — merge ESPN live scores onto our hardcoded field
     const espnMap = {};
-    if(result.players.some(q=>q.r1!=null))result.players.forEach(p => {
-      espnMap[p.name.toLowerCase()] = p;
+    result.players.forEach(p => {
+      espnMap[normName(p.name)] = p;
     });
     const merged = FIELD_2026.map(p => {
-      const espn = espnMap[p.name.toLowerCase()];
+      const espn = espnMap[normName(p.name)];
       if (espn) return {
         ...p,
         ...espn,
@@ -727,7 +732,12 @@ async function fetchLeaderboard() {
       return p;
     });
 
-   
+    // Add any ESPN players not in our field
+    result.players.forEach(p => {
+      if (!merged.find(m => m.name.toLowerCase() === p.name.toLowerCase())) {
+        merged.push(p);
+      }
+    });
     return {
       players: merged,
       source: "ESPN"
