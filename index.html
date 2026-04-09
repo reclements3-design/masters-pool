@@ -699,7 +699,7 @@ async function fetchFromESPN() {
 // Main fetch: try ESPN for live scores; fall back to hardcoded field pre-tournament
 async function fetchLeaderboard() {
   try {
-    throw new Error("Pre-tournament - using hardcoded field");
+    const result = await fetchFromESPN();
 
     // Check if Masters tournament has actually started (R1 scores exist)
     const tournamentHasStarted = result.players.some(p => p.r1 != null);
