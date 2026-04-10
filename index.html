@@ -635,10 +635,7 @@ const FIELD_2026 = [
 // ─── ESPN Golf API fetch ───────────────────────────────────────────────────
 // ESPN's public endpoint for the Masters (event 2025014 = Masters 2026 placeholder;
 // ESPN uses a consistent pattern — we fetch the current Masters event ID dynamically)
-const ESPN_MASTERS_URL = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?event=401811941";
-// 401811941 = 2025 Masters (most recent known); for 2026 ESPN will use a new ID.
-// The app tries this URL; if ESPN returns a different/new event, it still parses correctly.
-
+const ESPN_MASTERS_URL = "https://site.web.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?event=401811941";
 function parseESPN(data) {
   var _data$events, _event$competitions, _competition$competit;
   // ESPN scoreboard → our leaderboard schema
@@ -687,68 +684,12 @@ function parseESPN(data) {
     };
   }).filter(p => p.name !== "Unknown");
 }
-async function fetchFromESPN() {
-  const res = await fetch(ESPN_MASTERS_URL, {
-    cache: "no-store"
-  });
-  if (!res.ok) throw new Error(`ESPN returned ${res.status}`);
-  const data = await res.json();
-  const players = parseESPN(data);
-  if (players.length < 10) throw new Error("ESPN returned too few players — likely wrong event");
-  return {
-    players,
-    source: "ESPN"
-  };
-}
-
-// Main fetch: try ESPN for live scores; fall back to hardcoded field pre-tournament
 async function fetchLeaderboard() {
-  try {
-    const result = await fetchFromESPN();
-
-    // Check if Masters tournament has actually started (R1 scores exist)
-    const tournamentHasStarted = result.players.some(p => p.r1 != null);
-
-    // Pre-tournament: ESPN returns wrong event's field — use our hardcoded field only
-    if (!tournamentHasStarted) {
-      return {
-        players: FIELD_2026,
-        source: "ESPN"
-      };
-    }
-
-    // Tournament started — merge ESPN live scores onto our hardcoded field
-    const espnMap = {};
-    result.players.forEach(p => {
-      espnMap[normName(p.name)] = p;
-    });
-    const merged = FIELD_2026.map(p => {
-      const espn = espnMap[normName(p.name)];
-      if (espn) return {
-        ...p,
-        ...espn,
-        worldRanking: p.worldRanking
-      };
-      return p;
-    });
-
-    // Add any ESPN players not in our field
-    result.players.forEach(p => {
-      if (!merged.find(m => m.name.toLowerCase() === p.name.toLowerCase())) {
-        merged.push(p);
-      }
-    });
-    return {
-      players: merged,
-      source: "ESPN"
-    };
-  } catch (e) {
-    return {
-      players: FIELD_2026,
-      source: "hardcoded",
-      error: e.message
-    };
-  }
+  // ESPN feed disabled — app uses manual scores entered by commissioner
+  return {
+    players: FIELD_2026,
+    source: "hardcoded"
+  };
 }
 
 // ─── Countdown hook ────────────────────────────────────────────────────────
@@ -2700,17 +2641,17 @@ function MastersPool() {
       marginBottom: 8,
       lineHeight: 1.7
     }
-  }, "One player per line. Format:", " ", /*#__PURE__*/React.createElement("span", {
+  }, "One player per line:", " ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: GOLD,
       fontFamily: "monospace"
     }
-  }, "Player Name, R1, R2, R3, R4, CUT"), /*#__PURE__*/React.createElement("br", null), "Use ", /*#__PURE__*/React.createElement("span", {
+  }, "Player Name, R1, R2, R3, R4"), /*#__PURE__*/React.createElement("br", null), "Use ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: GOLD,
       fontFamily: "monospace"
     }
-  }, "-"), " for rounds not yet played. Use ", /*#__PURE__*/React.createElement("span", {
+  }, "-"), " for rounds not yet played. Add ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: GOLD,
       fontFamily: "monospace"
@@ -2721,13 +2662,13 @@ function MastersPool() {
       fontFamily: "monospace",
       fontSize: 10
     }
-  }, "Scottie Scheffler, 66, 68, -, -, -"), /*#__PURE__*/React.createElement("br", null), "Example: ", /*#__PURE__*/React.createElement("span", {
+  }, "Scottie Scheffler, 67, 65, -, -"), /*#__PURE__*/React.createElement("br", null), "Example: ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: "#7aaf8a",
       fontFamily: "monospace",
       fontSize: 10
     }
-  }, "Tiger Woods, 77, 79, -, -, CUT")), /*#__PURE__*/React.createElement("textarea", {
+  }, "Jon Rahm, 74, 76, -, -, CUT")), /*#__PURE__*/React.createElement("textarea", {
     value: manualInput,
     onChange: e => {
       setManualInput(e.target.value);
@@ -2758,36 +2699,54 @@ function MastersPool() {
   }, "\u26A0 ", manualParseError), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       // Parse the pasted text
+      // Smart parser — accepts comma format OR messy copy-paste
       const lines = manualInput.split("\n").map(l => l.trim()).filter(Boolean);
       const parsed = [];
-      const errors = [];
-      lines.forEach((line, i) => {
-        var _parts$, _parts$2;
-        const parts = line.split(",").map(p => p.trim());
-        if (parts.length < 2) {
-          errors.push(`Line ${i + 1}: too few columns`);
-          return;
-        }
-        const name = parts[0];
-        if (!name) {
-          errors.push(`Line ${i + 1}: missing name`);
-          return;
-        }
+      const knownNames = FIELD_2026.map(p => p.name);
+      lines.forEach(line => {
+        // Try strict comma format first: Name, R1, R2, R3, R4, CUT
+        const commaParts = line.split(",").map(p => p.trim());
         const parseRound = v => {
           if (!v || v === "-" || v === "") return null;
           const n = parseInt(v, 10);
           return isNaN(n) ? null : n;
         };
-        const r1 = parseRound(parts[1]);
-        const r2 = parseRound(parts[2]);
-        const r3 = parseRound(parts[3]);
-        const r4 = parseRound(parts[4]);
-        const cutFlag = ((_parts$ = parts[5]) === null || _parts$ === void 0 ? void 0 : _parts$.toUpperCase()) === "CUT" || ((_parts$2 = parts[4]) === null || _parts$2 === void 0 ? void 0 : _parts$2.toUpperCase()) === "CUT";
-        // toPar: sum rounds vs par 72 each
+        let name = null,
+          r1 = null,
+          r2 = null,
+          r3 = null,
+          r4 = null,
+          cutFlag = false;
+        if (commaParts.length >= 2 && commaParts[0].length > 2) {
+          // Comma format
+          name = commaParts[0];
+          r1 = parseRound(commaParts[1]);
+          r2 = parseRound(commaParts[2]);
+          r3 = parseRound(commaParts[3]);
+          r4 = parseRound(commaParts[4]);
+          cutFlag = commaParts.some(p => p.toUpperCase() === "CUT");
+        } else {
+          // Try to match against known player names in line
+          const matchedPlayer = knownNames.find(n => {
+            const norm = normName(n);
+            return normName(line).includes(norm);
+          });
+          if (!matchedPlayer) return;
+          name = matchedPlayer;
+          // Extract numbers from the line
+          const nums = line.match(/\b(6[0-9]|7[0-9]|8[0-9])\b/g);
+          if (nums) {
+            r1 = nums[0] ? parseInt(nums[0]) : null;
+            r2 = nums[1] ? parseInt(nums[1]) : null;
+            r3 = nums[2] ? parseInt(nums[2]) : null;
+            r4 = nums[3] ? parseInt(nums[3]) : null;
+          }
+          cutFlag = /cut|mc|wd/i.test(line);
+        }
+        if (!name) return;
         const rounds = [r1, r2, r3, r4].filter(r => r !== null);
         const toPar = rounds.length > 0 ? rounds.reduce((a, b) => a + b, 0) - 72 * rounds.length : null;
         const score = rounds.length > 0 ? rounds.reduce((a, b) => a + b, 0) : null;
-        // Position assigned after sort
         parsed.push({
           name,
           r1,
@@ -2802,12 +2761,8 @@ function MastersPool() {
           worldRanking: null
         });
       });
-      if (errors.length > 0) {
-        setManualParseError(errors.join(" · "));
-        return;
-      }
       if (parsed.length === 0) {
-        setManualParseError("No valid players found — check format");
+        setManualParseError("No valid players found — try format: Player Name, 67, 68, -, -, -");
         return;
       }
       // Assign positions based on toPar
