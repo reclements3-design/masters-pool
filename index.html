@@ -2471,7 +2471,7 @@ function MastersPool() {
       cursor: "pointer"
     }
   }, "\u2B07 Export All Entries to CSV"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setTab("manual"),
+    onClick: () => setShowManualPanel(p => !p),
     style: {
       width: "100%",
       marginTop: 8,
@@ -2483,7 +2483,7 @@ function MastersPool() {
       fontSize: 13,
       cursor: "pointer"
     }
-  }, espnError ? "⚠ Enter Manual Scores" : "📝 Manual Score Override"))), tab === "manual" && commUnlocked && /*#__PURE__*/React.createElement("div", {
+  }, espnError ? "⚠ Enter Manual Scores" : "📝 Manual Score Override"))), tab === "admin" && commUnlocked && showManualPanel && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: "14px 12px"
     }
