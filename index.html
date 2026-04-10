@@ -887,10 +887,12 @@ function MastersPool() {
 
   // Re-apply leaderboard when manual scores change
   useEffect(() => {
-    if (espnError && manualScores.length > 0) {
-      applyLeaderboard(manualScores, true, true, true);
+    if (manualScores.length > 0) {
+      setLeaderboard(manualScores);
+      setDataSource("manual");
+      setLastUpdated(new Date());
     }
-  }, [manualScores, espnError, applyLeaderboard]);
+  }, [manualScores]);
   const displayPlayers = useMemo(() => {
     let list = [...leaderboard];
     const activeSearch = tab === "pick" ? pickSearch : search;
@@ -2777,6 +2779,11 @@ function MastersPool() {
       db.upsertManualScores(parsed).catch(() => {});
       setManualScores(parsed);
       setManualParseError(null);
+      // Force leaderboard update immediately
+      setLeaderboard(parsed);
+      setDataSource("manual");
+      setLastUpdated(new Date());
+      lastPublishedRound.current = 0;
     },
     style: {
       width: "100%",
